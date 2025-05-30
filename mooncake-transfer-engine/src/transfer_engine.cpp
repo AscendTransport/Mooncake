@@ -99,7 +99,7 @@ int TransferEngine::init(const std::string &metadata_conn_string,
 
     LOG(INFO) << "Transfer Engine RPC using " << rpc_binding_method
               << ", listening on " << desc.ip_or_host_name << ":"
-              << desc.rpc_port;
+              << desc.rpc_port << "local_server_name_" << local_server_name_;
 
     metadata_ = std::make_shared<TransferMetadata>(metadata_conn_string);
     multi_transports_ =
@@ -107,6 +107,9 @@ int TransferEngine::init(const std::string &metadata_conn_string,
 
     int ret = metadata_->addRpcMetaEntry(local_server_name_, desc);
     if (ret) return ret;
+#ifdef USE_ASCEND
+    multi_transports_->installTransport("ascend", local_topology_);
+#else
 
     if (auto_discover_) {
         LOG(INFO) << "Auto-discovering topology...";
@@ -135,7 +138,7 @@ int TransferEngine::init(const std::string &metadata_conn_string,
         }
         // TODO: install other transports automatically
     }
-
+#endif
     return 0;
 }
 

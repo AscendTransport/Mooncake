@@ -8,6 +8,23 @@ if (NOT GLOBAL_CONFIG)
   include(../mooncake-common/common.cmake)
 endif() # GLOBAL_CONFIG
 
+set(ASCEND_DIR "/usr/local/Ascend/ascend-toolkit/8.2.RC1.alpha002/aarch64-linux/include")
+if (USE_ASCEND)
+  include_directories(/usr/local/include
+                      /usr/include
+                      ${ASCEND_DIR}
+                      ${ASCEND_DIR}/experiment
+                      ${ASCEND_DIR}/experiment/hccl
+                      ${ASCEND_DIR}/experiment/slog/toolchain
+                      ${ASCEND_DIR}/experiment/metadef/common/util/error_manager
+                      ${ASCEND_DIR}/experiment/runtime
+                      ${ASCEND_DIR}/experiment/msprof
+                      /usr/local/mpich-3.2.1/include/
+                      /usr/local/Ascend/ascend-toolkit/8.2.RC1.alpha002/tools/hccl_test/common/src/
+                      )
+endif()
+
+
 include_directories(include)
 add_subdirectory(include)
 add_subdirectory(src)
