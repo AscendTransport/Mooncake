@@ -38,6 +38,10 @@
 #include "ylt/metric/counter.hpp"
 #endif
 
+#ifdef USE_ASCEND
+
+#endif
+
 namespace mooncake {
 using TransferRequest = Transport::TransferRequest;
 using TransferStatus = Transport::TransferStatus;
