@@ -50,7 +50,7 @@ if (USE_CUDA)
 endif()
 
 if (USE_ASCEND)
-  link_directories(/usr/local/Ascend/ascend-toolkit/8.2.RC1.alpha002/aarch64-linux/lib64 /usr/local/mpich-3.2.1/lib/)
+  link_directories(/usr/local/Ascend/ascend-toolkit/8.2.RC1.alpha002/x86_64-linux/lib64 /usr/local/mpich-3.2.1/lib/)
   target_link_libraries(transfer_engine PUBLIC ascendcl hccl cjson)
   target_link_libraries(transfer_engine PUBLIC ascend_transport)
 endif()

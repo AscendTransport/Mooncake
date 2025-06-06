@@ -457,7 +457,7 @@ int transportMemAccept(RankInfo *local_rank_info) {
                                             remoteIp));
 
     std::vector<SocketWlistInfo> wlistInfoVec;
-    SocketWlistInfo wlistInfo = {0};
+    SocketWlistInfo wlistInfo = {};
     wlistInfo.connLimit = 1;
     memcpy(&wlistInfo.tag[0], baseTag_.c_str(), baseTag_.size() + 1);
     wlistInfo.remoteIp.addr = remoteIp.GetBinaryAddress().addr;

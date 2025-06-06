@@ -53,7 +53,14 @@ int TransferEngine::init(const std::string &metadata_conn_string,
     if (getenv("MC_LEGACY_RPC_PORT_BINDING") ||
         metadata_conn_string == P2PHANDSHAKE) {
         rpc_binding_method = "legacy/P2P";
+#ifdef USE_ASCEND
+        int device_id = -1;
+        auto [host_name, port] = parseHostNameWithPortAscend(local_server_name, &device_id);
+        LOG(INFO) << "Transfer Engine parseHostNameWithPortAscend. Server: " << host_name << " port: "
+        << port << " device_id: " << device_id;
+#else
         auto [host_name, port] = parseHostNameWithPort(local_server_name);
+#endif
         desc.ip_or_host_name = host_name;
         desc.rpc_port = port;
         desc.sockfd = -1;
@@ -68,8 +75,13 @@ int TransferEngine::init(const std::string &metadata_conn_string,
                     return -1;
                 }
             }
+#ifdef USE_ASCEND
+            local_server_name_ =
+                desc.ip_or_host_name + ":" + std::to_string(desc.rpc_port) + ":npu_" + std::to_string(device_id);
+#else
             local_server_name_ =
                 desc.ip_or_host_name + ":" + std::to_string(desc.rpc_port);
+#endif
         }
     } else {
         rpc_binding_method = "new RPC mapping";

@@ -1,4 +1,4 @@
-link_directories("/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64")
+link_directories("/usr/local/Ascend/ascend-toolkit/latest/x86_64-linux/lib64")
 link_directories("/usr/local/mpich-3.2.1/lib/")
 
 add_executable(transfer_engine_bench transfer_engine_bench.cpp)

@@ -90,7 +90,7 @@ class HcclTransport : public Transport {
 
     void acceptLoop(int deviceLogicId);
 
-    int getRankFromServerName(const std::string& local_server_name);
+    int getDevIdAndIpPortFromServerName(std::string& local_server_name, std::string& ip, int &ip_port, int& devicePhyId);
 
     int findDeviceInfo(const cJSON* root, int devicePhyId);
 

@@ -3,6 +3,7 @@
 
 #include <condition_variable>
 #include <glog/logging.h>
+#include <functional>
 
 #include "acl/acl.h"
 #include "adapter_hccp_common.h"

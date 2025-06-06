@@ -111,18 +111,42 @@ int HcclTransport::initPdThread(){
 }
 
 // getrankid
-int HcclTransport::getRankFromServerName(const std::string& local_server_name) {
-    size_t underscore_pos = local_server_name.find_last_of('_');
-    if (underscore_pos == std::string::npos) {
-        LOG(ERROR) << "Invalid format: No underscore found.";
+int HcclTransport::getDevIdAndIpPortFromServerName(std::string& identifier, std::string& ip, int &port, int& npuId) {
+    size_t firstColon = identifier.find(":");
+    if (firstColon == std::string::npos) {
+        LOG(ERROR) << "HcclTransport: getDevIdAndIpPortFromServerName failed, identifier is empty";
         return -1;
     }
 
-    std::string number_part = local_server_name.substr(underscore_pos + 1);
+    size_t secondColon = identifier.find(":", firstColon + 1);
+    if (secondColon == std::string::npos) {
+        LOG(ERROR) << "HcclTransport: getDevIdAndIpPortFromServerName failed, second colon missing";
+        return -1;
+    }
 
-    int rank_id = std::stoi(number_part);
+    ip = identifier.substr(0, firstColon);
 
-    return rank_id;
+    std::string portStr = identifier.substr(firstColon + 1, secondColon - firstColon - 1);
+    try {
+        port = std::stoi(portStr);
+    } catch (const std::exception &e) {
+        LOG(ERROR) << "Invalid Port Number";
+        return -1;
+    }
+
+    std::string npuStr = identifier.substr(secondColon + 1);
+    if (npuStr.find("npu_") != 0) {
+        LOG(ERROR) << "Invalid npu number format - should start with 'npu_'";
+    }
+
+    try {
+        npuId = std::stoi(npuStr.substr(4));
+    } catch (const std::exception &e) {
+        LOG(ERROR) << "Invalid device_id ID";
+        return -1;
+    }
+
+    return 0;
 }
 
 int HcclTransport::findDeviceInfo(const cJSON* root, int devicePhyId) {
@@ -239,12 +263,15 @@ int HcclTransport::install(std::string &local_server_name,
                           std::shared_ptr<TransferMetadata> meta, std::shared_ptr<Topology> topo) {
     int ret;
     metadata_ = meta;
-    local_server_name_ = local_server_name;
-    int devicePhyId = getRankFromServerName(local_server_name);
-    if (devicePhyId < 0){
-        LOG(ERROR) << "HcclTransport: getRankFromServerName failed, ret: " << devicePhyId;
+    int port;
+    std::string ip;
+    int devicePhyId;
+    ret = getDevIdAndIpPortFromServerName(local_server_name, ip, port, devicePhyId);
+    if (ret < 0){
+        LOG(ERROR) << "HcclTransport: getDevIdAndIpPortFromServerName failed, ret: " << ret <<", local_server_name" << local_server_name;
         return -1; 
     }
+    local_server_name_ = std::to_string(port);
 
     LOG(INFO) << "HcclTransport: local devicePhyId: " << devicePhyId;
 
