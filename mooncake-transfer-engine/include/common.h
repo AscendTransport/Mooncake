@@ -144,7 +144,7 @@ static inline std::pair<std::string, uint16_t> parseHostNameWithPortAscend(
     auto port_str = remaining.substr(0, second_pods);
     auto npu_str = remaining.substr(second_pods + 1);
 
-    int val = std::atoi(npu_str.c_str());
+    int val = std::atoi(port_str.c_str());
     if (val <= 0 || val > 65535) {
         LOG(WARNING) << "Illegal port number in " << server_name
                      << ". Use default port " << port << " instead";
