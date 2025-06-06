@@ -31,9 +31,8 @@ std::unordered_map<std::string, std::shared_ptr<hccl::TransportMem>>
     target_key_to_transport_mem_map_;
 std::vector<hccl::TransportMem::RmaMem *> localRmaMem_;
 
-void *g_addr = nullptr;
-int g_len = 0;
-bool g_is_reg_addr = false;
+std::vector<void *> g_mem_c;
+std::vector<int> g_len_c;
 
 int g_server_socket_ = 0;
 struct sockaddr_in g_server_addr_;
@@ -182,7 +181,7 @@ static int connectToTarget(std::string target_ip, int target_port) {
 }
 
 int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info, 
-                    void *mem_addr, int mem_len, int op_code, uint64_t offset,
+                    int op_code, uint64_t offset,
                     uint64_t req_len, void *local_mem, aclrtStream stream)
 {
     LOG(INFO) << "transportMemTask local_rank_info rankId: "
@@ -206,8 +205,6 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
 
     // 1、封装控制信息
     RankControlInfo control_info;
-    control_info.addr = (uint64_t)mem_addr;
-    control_info.len = mem_len;
     control_info.deviceLogicId = local_rank_info->deviceLogicId;
     control_info.devicePhyId = local_rank_info->devicePhyId;
     control_info.hostIp = local_rank_info->hostIp;
@@ -339,22 +336,20 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
             return -1;
         }
         target_key_to_transport_mem_map_[key_str] = transport_mem;
-        while (g_addr == nullptr) {
-            sleep(1);
+        
+        hccl::TransportMem::RmaMemDesc *arr = (hccl::TransportMem::RmaMemDesc *)malloc(sizeof(hccl::TransportMem::RmaMemDesc) * g_mem_c.size());
+        for (uint32_t i = 0; i < g_mem_c.size(); ++i) {
+            hccl::TransportMem::RmaMem localRmaMem = {hccl::RmaMemType::DEVICE, g_mem_c[i], (uint64_t)g_len_c[i]};
+            HCCLCHECK(transport_mem->RegMem(localRmaMem, arr[i]));
         }
-
-        // 内存注册
-        hccl::TransportMem::RmaMem localRmaMem = {hccl::RmaMemType::DEVICE, g_addr, (uint64_t)g_len};
-        hccl::TransportMem::RmaMemDesc localRmaMemDesc;
-        HCCLCHECK(transport_mem->RegMem(localRmaMem, localRmaMemDesc));
         uint32_t actualNumOfRemote = 0;
         hccl::TransportMem::RmaMemDescs localRmaMemDescs;
-        localRmaMemDescs.array = &localRmaMemDesc;
-        localRmaMemDescs.arrayLength = 1;
+        localRmaMemDescs.array = arr;
+        localRmaMemDescs.arrayLength = g_mem_c.size();
         hccl::TransportMem::RmaMemDesc remoteRmaMemDesc;
         hccl::TransportMem::RmaMemDescs remoteRmaMemDescs;
         remoteRmaMemDescs.array = &remoteRmaMemDesc;
-        remoteRmaMemDescs.arrayLength = 1;
+        remoteRmaMemDescs.arrayLength = g_mem_c.size();
         HCCLCHECK(transport_mem->ExchangeMemDesc(localRmaMemDescs, remoteRmaMemDescs, actualNumOfRemote));
         hccl::TransportMem::RmaMem remoteRmaMem;
         HCCLCHECK(transport_mem->EnableMemAccess(remoteRmaMemDesc, remoteRmaMem));
@@ -369,7 +364,7 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
     localMem.addr = local_mem;
     localMem.size = req_len;
     hccl::TransportMem::RmaOpMem remoteMem;
-    remoteMem.addr = (void *)((uint64_t)mem_addr + offset);
+    remoteMem.addr = (void *)offset;
     remoteMem.size = req_len;
 
     if (op_code == WRITE){
@@ -546,22 +541,19 @@ int transportMemAccept(RankInfo *local_rank_info) {
         transport_mem = target_key_to_transport_mem_map_[key_str];
     }
 
-    while (g_addr == NULL) {
-        sleep(1);
+    hccl::TransportMem::RmaMemDesc *arr = (hccl::TransportMem::RmaMemDesc *)malloc(sizeof(hccl::TransportMem::RmaMemDesc) * g_mem_c.size());
+    for (uint32_t i = 0; i < g_mem_c.size(); ++i) {
+        hccl::TransportMem::RmaMem localRmaMem = {hccl::RmaMemType::DEVICE, g_mem_c[i], (uint64_t)g_len_c[i]};
+        HCCLCHECK(transport_mem->RegMem(localRmaMem, arr[i]));
     }
-
-    // 内存注册
-    hccl::TransportMem::RmaMem localRmaMem = {hccl::RmaMemType::DEVICE, g_addr, (uint64_t)g_len};
-    hccl::TransportMem::RmaMemDesc localRmaMemDesc;
-    HCCLCHECK(transport_mem->RegMem(localRmaMem, localRmaMemDesc));
     uint32_t actualNumOfRemote = 0;
     hccl::TransportMem::RmaMemDescs localRmaMemDescs;
-    localRmaMemDescs.array = &localRmaMemDesc;
-    localRmaMemDescs.arrayLength = 1;
+    localRmaMemDescs.array = arr;
+    localRmaMemDescs.arrayLength = g_mem_c.size();
     hccl::TransportMem::RmaMemDesc remoteRmaMemDesc;
     hccl::TransportMem::RmaMemDescs remoteRmaMemDescs;
     remoteRmaMemDescs.array = &remoteRmaMemDesc;
-    remoteRmaMemDescs.arrayLength = 1;
+    remoteRmaMemDescs.arrayLength = g_mem_c.size();
     HCCLCHECK(transport_mem->ExchangeMemDesc(localRmaMemDescs, remoteRmaMemDescs, actualNumOfRemote));
     hccl::TransportMem::RmaMem remoteRmaMem;
     HCCLCHECK(transport_mem->EnableMemAccess(remoteRmaMemDesc, remoteRmaMem));
@@ -572,8 +564,8 @@ int transportMemAccept(RankInfo *local_rank_info) {
 int regLocalRmaMem(void *addr, int length)
 {
     // 内存信息保存
-    g_addr = addr;
-    g_len = length;
+    g_mem_c.push_back(addr);
+    g_len_c.push_back(length);
     return 0;
 }
 

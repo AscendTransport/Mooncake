@@ -147,7 +147,15 @@ int initiator() {
     else {
         LOG(ERROR) << "Unsupported operation: must be 'read' or 'write'";
         exit(EXIT_FAILURE);
-    }    
+    }
+
+    auto segment_desc = engine->getMetadata()->getSegmentDescByID(segment_id);
+    if (!segment_desc) {
+        LOG(ERROR) << "Unable to get target segment ID, please recheck";
+        exit(EXIT_FAILURE);
+    }
+    uint64_t remote_base =
+        (uint64_t)segment_desc->buffers[0].addr;   
 
     auto batch_id = engine->allocateBatchID(FLAGS_batch_size);
     Status s;
@@ -158,7 +166,7 @@ int initiator() {
         entry.length = FLAGS_block_size;
         entry.source = (uint8_t *)(dev_addr) + FLAGS_block_size * i;
         entry.target_id = segment_id;
-        entry.target_offset = FLAGS_block_size * i + FLAGS_buffer_size * FLAGS_send_index; 
+        entry.target_offset = remote_base + FLAGS_block_size * i + FLAGS_buffer_size * FLAGS_send_index; 
         requests.emplace_back(entry);
     }
 

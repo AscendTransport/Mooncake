@@ -5,7 +5,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE OFF)
 string(REPLACE "-O2" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 string(REPLACE "-O2" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
 
-set(ASCEND_DIR "/usr/local/Ascend/ascend-toolkit/8.2.RC1.alpha002/x86_64-linux/include")
+set(ASCEND_DIR "/usr/local/Ascend/ascend-toolkit/latest/x86_64-linux/include")
 link_directories(/usr/local/Ascend/ascend-toolkit/latest/x86_64-linux/lib64)
 include_directories(/usr/local/include
                     /usr/include
@@ -17,7 +17,7 @@ include_directories(/usr/local/include
                     ${ASCEND_DIR}/experiment/runtime
                     ${ASCEND_DIR}/experiment/msprof
                     /usr/include/mpich-x86_64/
-                    /usr/local/Ascend/ascend-toolkit/8.2.RC1.alpha002/tools/hccl_test/common/src/
+                    /usr/local/Ascend/ascend-toolkit/latest/tools/hccl_test/common/src/
                     )
 add_library(ascend_transport_mem SHARED  ${ASCEND_TRANSPORT_MEM_SOURCES})
 set_target_properties(ascend_transport_mem PROPERTIES POSITION_INDEPENDENT_CODE ON)

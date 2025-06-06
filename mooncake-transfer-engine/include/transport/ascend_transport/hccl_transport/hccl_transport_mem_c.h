@@ -49,8 +49,6 @@ struct RankControlInfo {
     int deviceLogicId;
     int devicePhyId;
     struct in_addr hostIp;
-    uint64_t addr;
-    uint64_t len;
 };
 
 
@@ -77,8 +75,7 @@ extern int initTransportMem(RankInfo *local_rank_info);
 
 
 extern int transportMemTask(RankInfo *local_rank_info, 
-                            RankInfo *remote_rank_info, void *mem_addr,
-                            int mem_len, int op_code, uint64_t offset,
+                            RankInfo *remote_rank_info, int op_code, uint64_t offset,
                             uint64_t req_len, void *local_mem, aclrtStream stream);
 
 

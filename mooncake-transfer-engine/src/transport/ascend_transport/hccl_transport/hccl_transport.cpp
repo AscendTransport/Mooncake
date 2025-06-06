@@ -60,9 +60,7 @@ void HcclTransport::initiatorLoop(int deviceLogicId, int selfIdx){
         remote_rank_info_.devicePort = segment_desc->rank_info.devicePort;
         remote_rank_info_.serverIdx = 0;
 
-        void *remote_mem = (void*)segment_desc->buffers[0].addr;
-        int remote_mem_len = segment_desc->buffers[0].length;
-        ret = transportMemTask(&local_rank_info_, &remote_rank_info_, remote_mem, remote_mem_len, slice->opcode,
+        ret = transportMemTask(&local_rank_info_, &remote_rank_info_, slice->opcode,
             slice->hccl.dest_addr, slice->length, slice->source_addr, stream);
         if (ret != HCCL_SUCCESS){
             LOG(ERROR) << "HcclTransport: transportMemTask error, ret:" << ret;
