@@ -95,7 +95,7 @@ extern int transportMemAccept(RankInfo *local_rank_info);
 
 
 
-extern int regLocalRmaMem(void *addr, int length);
+extern int regLocalRmaMem(void *addr, uint64_t length);
 
 #ifdef __cplusplus
 }

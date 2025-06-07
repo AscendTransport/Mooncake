@@ -32,7 +32,7 @@ std::unordered_map<std::string, std::shared_ptr<hccl::TransportMem>>
 std::vector<hccl::TransportMem::RmaMem *> localRmaMem_;
 
 std::vector<void *> g_mem_c;
-std::vector<int> g_len_c;
+std::vector<uint64_t> g_len_c;
 
 int g_server_socket_ = 0;
 struct sockaddr_in g_server_addr_;
@@ -561,7 +561,7 @@ int transportMemAccept(RankInfo *local_rank_info) {
     return 0;
 }
 
-int regLocalRmaMem(void *addr, int length)
+int regLocalRmaMem(void *addr, uint64_t length)
 {
     // 内存信息保存
     g_mem_c.push_back(addr);
