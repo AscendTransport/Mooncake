@@ -552,12 +552,15 @@ int transportMemAccept(RankInfo *local_rank_info) {
     }
     uint32_t actualNumOfRemote = 0;
     hccl::TransportMem::RmaMemDescs localRmaMemDescs;
+    LOG(INFO) << "111111111localRmaMemDescs arr";
     localRmaMemDescs.array = arr;
     localRmaMemDescs.arrayLength = g_mem_c.size();
+    LOG(INFO) << "2222222222remoteRmaMemDesc arr";
     hccl::TransportMem::RmaMemDesc remoteRmaMemDesc;
     hccl::TransportMem::RmaMemDescs remoteRmaMemDescs;
     remoteRmaMemDescs.array = &remoteRmaMemDesc;
     remoteRmaMemDescs.arrayLength = g_mem_c.size();
+    LOG(INFO) << "333333333333transport_mem->ExchangeMemDesc";
     HCCLCHECK(transport_mem->ExchangeMemDesc(localRmaMemDescs, remoteRmaMemDescs, actualNumOfRemote));
     hccl::TransportMem::RmaMem remoteRmaMem;
     HCCLCHECK(transport_mem->EnableMemAccess(remoteRmaMemDesc, remoteRmaMem));
