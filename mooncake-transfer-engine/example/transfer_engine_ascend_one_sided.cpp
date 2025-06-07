@@ -227,7 +227,7 @@ int initiator() {
         (uint64_t)segment_desc->buffers[1].addr;   
 
     auto batch_id_2 = engine->allocateBatchID(FLAGS_batch_size);
-    Status s;
+    s;
     std::vector<TransferRequest> requests;
     for (int i = 0; i < FLAGS_batch_size; ++i) {
         TransferRequest entry;
