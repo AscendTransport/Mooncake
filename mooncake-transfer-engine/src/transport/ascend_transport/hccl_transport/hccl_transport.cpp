@@ -221,8 +221,8 @@ int HcclTransport::rankTableParse(int devicePhyId) {
     const char* envRankTablePath = std::getenv("ENV_RANKTABLE_PATH");
     std::string filePath;
     if (!envRankTablePath) {
-        LOG(WARNING) << "Environment variables ENV_RANKTABLE_PATH are not set. use Default Path";
-        filePath = std::string("/etc/default_ranktable.json");
+        LOG(INFO) << "Environment variables ENV_RANKTABLE_PATH are not set. use Default Path";
+        filePath = std::string("/etc/hccl_16p.json");
     } else {
         filePath = std::string(envRankTablePath);
     }
