@@ -34,10 +34,8 @@
 
 static std::string getHostname();
 
-DEFINE_string(local_server_name_initiator, getHostname(),
-              "initiator Local server name for segment discovery");
-DEFINE_string(local_server_name_target, getHostname(),
-              "target Local server name for segment discovery");
+DEFINE_string(local_server_name, getHostname(),
+              "Local server name for segment discovery");
 DEFINE_string(metadata_server, "10.244.182.87:2379", "etcd server host address");
 DEFINE_string(mode, "initiator",
               "Running mode: initiator or target. Initiator node read/write "
@@ -47,20 +45,21 @@ DEFINE_string(operation, "read", "Operation type: read or write");
 DEFINE_string(protocol, "hccl", "Transfer protocol: rdma|tcp|hccl");
 
 DEFINE_string(segment_id, "192.168.3.76", "Segment ID to access data");
-DEFINE_uint64(buffer_size, 524288, "total size of data buffer");
-DEFINE_int32(batch_size, 10, "Batch size");
-DEFINE_uint64(block_size, 4096, "Block size for each transfer request");
+DEFINE_int32(batch_size, 20, "Batch size");
+DEFINE_uint64(block_size, 131072, "Block size for each transfer request");
 DEFINE_bool(auto_discovery, false, "Enable auto discovery");
 
 DEFINE_uint64(device_id, 0, "The device ID of this machine");
 DEFINE_string(segment_id_1, "NA", "A segment ID that a sender wants to another receiver");
 DEFINE_uint64(recv_num, 1, "Num of coonections received by the receiver");
 DEFINE_uint64(send_index, 0, "which one is sent to the same receiver");
+DEFINE_string(report_unit, "GB", "Report unit: GB|GiB|Gb|MB|MiB|Mb|KB|KiB|Kb");
+DEFINE_uint32(report_precision, 2, "Report precision");
 
 using namespace mooncake;
 
-int procSize = 0;
-int procRank = 0;
+int g_deviceId = 0;
+uint64_t g_TotalSize = 0;
 
 static std::string getHostname() {
     char hostname[256];
@@ -69,6 +68,32 @@ static std::string getHostname() {
         return "";
     }
     return hostname;
+}
+
+const static std::unordered_map<std::string, uint64_t> RATE_UNIT_MP = {
+    {"GB", 1000ull * 1000ull * 1000ull},
+    {"GiB", 1ull << 30},
+    {"Gb", 1000ull * 1000ull * 1000ull / 8},
+    {"MB", 1000ull * 1000ull},
+    {"MiB", 1ull << 20},
+    {"Mb", 1000ull * 1000ull / 8},
+    {"KB", 1000ull},
+    {"KiB", 1ull << 10},
+    {"Kb", 1000ull / 8}};
+
+static inline std::string calculateRate(uint64_t data_bytes, uint64_t duration) {
+    if (!RATE_UNIT_MP.count(FLAGS_report_unit)) {
+        LOG(WARNING) << "Invalid flag: report_unit only support "
+                        "GB|GiB|Gb|MB|MiB|Mb|KB|KiB|Kb, not support "
+                     << FLAGS_report_unit
+                     << " . Now use GB(default) as report_unit";
+        FLAGS_report_unit = "GB";
+    }
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(FLAGS_report_precision)
+        << 1.0 * data_bytes * 1000000 / duration / RATE_UNIT_MP.at(FLAGS_report_unit)
+        << " " << FLAGS_report_unit << "/s";
+    return oss.str();
 }
 
 int device_malloc(void* &dev_addr, size_t size){
@@ -110,34 +135,34 @@ int device_malloc(void* &dev_addr, size_t size){
 
 int initiator() {
     aclrtContext context = NULL;
-    aclError ret = aclrtCreateContext(&context, procRank);
+    aclError ret = aclrtCreateContext(&context, g_deviceId);
     if (ret != ACL_ERROR_NONE) {
         printf("Failed to create context, ret:%d\n", ret);
         aclFinalize();
         return -1;
     }
 
-    sleep(1);
-
     // disable topology auto discovery for testing.
     auto engine = std::make_unique<TransferEngine>(FLAGS_auto_discovery);
 
-    auto hostname_port = parseHostNameWithPort(FLAGS_local_server_name_initiator);
-    int new_port = hostname_port.second + procRank;
-    std::string FLAGS_local_server_name_new = hostname_port.first + ":" + std::to_string(new_port) + ":npu_" + std::to_string(procRank);
+    auto hostname_port = parseHostNameWithPort(FLAGS_local_server_name);
+    std::string FLAGS_local_server_name_new = hostname_port.first + ":" + std::to_string(hostname_port.second) + ":npu_" + std::to_string(g_deviceId);
     engine->init(FLAGS_metadata_server, FLAGS_local_server_name_new.c_str(),
-                 hostname_port.first.c_str(), new_port);
+                 hostname_port.first.c_str(), hostname_port.second);
 
     void *dev_addr = NULL;
     device_malloc(dev_addr, FLAGS_block_size * FLAGS_batch_size);
 
     LOG(INFO) << "dev_addr_initor: " << dev_addr;
 
-    int rc = engine->registerLocalMemory(dev_addr, FLAGS_buffer_size,
-                                        "npu:" + std::to_string(procRank));
+    int rc = engine->registerLocalMemory(dev_addr, g_TotalSize,
+                                        "npu:" + std::to_string(g_deviceId));
     LOG_ASSERT(!rc);
 
     auto segment_id = engine->openSegment(FLAGS_segment_id.c_str());
+
+    struct timeval start_tv, stop_tv;
+    gettimeofday(&start_tv, nullptr);
 
     TransferRequest::OpCode opcode;
     if (FLAGS_operation == "read")
@@ -166,7 +191,7 @@ int initiator() {
         entry.length = FLAGS_block_size;
         entry.source = (uint8_t *)(dev_addr) + FLAGS_block_size * i;
         entry.target_id = segment_id;
-        entry.target_offset = remote_base + FLAGS_block_size * i + FLAGS_buffer_size * FLAGS_send_index; 
+        entry.target_offset = remote_base + FLAGS_block_size * i + g_TotalSize * FLAGS_send_index; 
         requests.emplace_back(entry);
     }
 
@@ -188,6 +213,15 @@ int initiator() {
         }
     }
     LOG(INFO) << "Send OK";
+    gettimeofday(&stop_tv, nullptr);
+    uint64_t duration = (stop_tv.tv_sec - start_tv.tv_sec) * 1000000.0 +
+                    (stop_tv.tv_usec - start_tv.tv_usec);
+
+    LOG(INFO) << "Test completed: duration " << duration << "us, batch count "
+              << FLAGS_batch_size * FLAGS_block_size << ", throughput "
+              << calculateRate(
+                     FLAGS_batch_size * FLAGS_block_size,
+                     duration);
     s = engine->freeBatchID(batch_id);
     LOG_ASSERT(s.ok());
 
@@ -221,7 +255,7 @@ int initiator() {
             entry.length = FLAGS_block_size;
             entry.source = (uint8_t *)(dev_addr) + FLAGS_block_size * i;
             entry.target_id = segment_id_1;
-            entry.target_offset = remote_base_1 + FLAGS_block_size * i + FLAGS_buffer_size * FLAGS_send_index;
+            entry.target_offset = remote_base_1 + FLAGS_block_size * i + g_TotalSize * FLAGS_send_index;
             requests.emplace_back(entry);
         }
 
@@ -255,7 +289,7 @@ volatile bool target_running = true;
 
 int target() {
     aclrtContext context = NULL;
-    aclError ret = aclrtCreateContext(&context, procRank);
+    aclError ret = aclrtCreateContext(&context, g_deviceId);
     if (ret != ACL_ERROR_NONE) {
         printf("Failed to create context\n");
         aclFinalize();
@@ -265,19 +299,18 @@ int target() {
     // disable topology auto discovery for testing.
     auto engine = std::make_unique<TransferEngine>(FLAGS_auto_discovery);
 
-    auto hostname_port = parseHostNameWithPort(FLAGS_local_server_name_target);
-    int new_port = hostname_port.second + procRank;
-    std::string FLAGS_local_server_name_new = hostname_port.first + ":" + std::to_string(new_port) + ":npu_" + std::to_string(procRank);
+    auto hostname_port = parseHostNameWithPort(FLAGS_local_server_name);
+    std::string FLAGS_local_server_name_new = hostname_port.first + ":" + std::to_string(hostname_port.second) + ":npu_" + std::to_string(g_deviceId);
     engine->init(FLAGS_metadata_server, FLAGS_local_server_name_new.c_str(),
-                 hostname_port.first.c_str(), new_port);
+                 hostname_port.first.c_str(), hostname_port.second);
 
     void *dev_addr = NULL;
     device_malloc(dev_addr, FLAGS_block_size * FLAGS_batch_size);
 
     LOG(INFO) << "dev_addr_target: " << dev_addr;
 
-    int rc = engine->registerLocalMemory(dev_addr, FLAGS_buffer_size * FLAGS_recv_num,
-                                        "npu:" + std::to_string(procRank));
+    int rc = engine->registerLocalMemory(dev_addr, g_TotalSize * FLAGS_recv_num,
+                                        "npu:" + std::to_string(g_deviceId));
     LOG_ASSERT(!rc);
 
     while (target_running) sleep(1);
@@ -287,8 +320,9 @@ int target() {
 
 int main(int argc, char **argv) {
     gflags::ParseCommandLineFlags(&argc, &argv, false);
+    g_TotalSize = (uint64_t)(FLAGS_batch_size * FLAGS_block_size);
 
-    procRank = FLAGS_device_id;
+    g_deviceId = FLAGS_device_id;
     //init ACL 
     const char *aclConfigPath = NULL;
     aclError ret = aclInit(aclConfigPath);
@@ -297,7 +331,7 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    ret = aclrtSetDevice(procRank);
+    ret = aclrtSetDevice(g_deviceId);
     if (ret != ACL_ERROR_NONE) {
         printf("Failed to set device ACL\n");
         return -1;
