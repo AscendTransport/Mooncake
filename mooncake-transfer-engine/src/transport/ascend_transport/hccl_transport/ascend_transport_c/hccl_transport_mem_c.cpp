@@ -337,11 +337,12 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
         }
         target_key_to_transport_mem_map_[key_str] = transport_mem;
         
-        LOG(INFO) << "Submit addr: "  << g_mem_c[i] << "length: " << (uint64_t)g_len_c[i] << "g_len_c[i]:" << g_len_c[i];
         hccl::TransportMem::RmaMemDesc *arr = (hccl::TransportMem::RmaMemDesc *)malloc(sizeof(hccl::TransportMem::RmaMemDesc) * g_mem_c.size());
         for (uint32_t i = 0; i < g_mem_c.size(); ++i) {
+            LOG(INFO) << "Submit addr: "  << g_mem_c[i] << "length: " << (uint64_t)g_len_c[i] << "g_len_c[i]:" << g_len_c[i];
             hccl::TransportMem::RmaMem localRmaMem = {hccl::RmaMemType::DEVICE, g_mem_c[i], (uint64_t)g_len_c[i]};
             HCCLCHECK(transport_mem->RegMem(localRmaMem, arr[i]));
+            LOG(INFO) << "Submit addr2: "  << g_mem_c[i] << "length: " << (uint64_t)g_len_c[i] << "g_len_c[i]:" << g_len_c[i];
         }
         uint32_t actualNumOfRemote = 0;
         hccl::TransportMem::RmaMemDescs localRmaMemDescs;
@@ -527,6 +528,7 @@ int transportMemAccept(RankInfo *local_rank_info) {
                         << ", ret: " << ret;
             return -1;
         }
+        LOG(INFO) <<"transport_mem->Connect(120);"
         ret = transport_mem->Connect(120);
         if (ret != HCCL_SUCCESS) {
             char deviceIp[64];
@@ -541,11 +543,12 @@ int transportMemAccept(RankInfo *local_rank_info) {
     } else {
         transport_mem = target_key_to_transport_mem_map_[key_str];
     }
-    LOG(INFO) << "Accept addr: "  << g_mem_c[i] << "length: " << (uint64_t)g_len_c[i] << "g_len_c[i]:" << g_len_c[i];
     hccl::TransportMem::RmaMemDesc *arr = (hccl::TransportMem::RmaMemDesc *)malloc(sizeof(hccl::TransportMem::RmaMemDesc) * g_mem_c.size());
     for (uint32_t i = 0; i < g_mem_c.size(); ++i) {
+        LOG(INFO) << "Accept addr: "  << g_mem_c[i] << "length: " << (uint64_t)g_len_c[i] << "g_len_c[i]:" << g_len_c[i] << "g_mem_c.size()" << g_mem_c.size();
         hccl::TransportMem::RmaMem localRmaMem = {hccl::RmaMemType::DEVICE, g_mem_c[i], (uint64_t)g_len_c[i]};
         HCCLCHECK(transport_mem->RegMem(localRmaMem, arr[i]));
+        LOG(INFO) << "Accept addr2: "  << g_mem_c[i] << "length: " << (uint64_t)g_len_c[i] << "g_len_c[i]:" << g_len_c[i] << "g_mem_c.size()" << g_mem_c.size();
     }
     uint32_t actualNumOfRemote = 0;
     hccl::TransportMem::RmaMemDescs localRmaMemDescs;
@@ -565,7 +568,7 @@ int transportMemAccept(RankInfo *local_rank_info) {
 int regLocalRmaMem(void *addr, uint64_t length)
 {
     // 内存信息保存
-    LOG(INFO) << "addr: "  << addr << "length: " << length;
+    LOG(INFO) << "regLocalRmaMemaddr: "  << addr << "length: " << length;
     g_mem_c.push_back(addr);
     g_len_c.push_back(length);
     return 0;
