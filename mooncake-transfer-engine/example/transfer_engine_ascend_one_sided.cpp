@@ -228,7 +228,7 @@ int initiator() {
 
     auto batch_id_2 = engine->allocateBatchID(FLAGS_batch_size);
     s;
-    std::vector<TransferRequest> requests;
+    std::vector<TransferRequest> requests2;
     for (int i = 0; i < FLAGS_batch_size; ++i) {
         TransferRequest entry;
         entry.opcode = opcode;
@@ -236,10 +236,10 @@ int initiator() {
         entry.source = (uint8_t *)(dev_addr2) + FLAGS_block_size * i;
         entry.target_id = segment_id;
         entry.target_offset = remote_base2 + FLAGS_block_size * i + g_TotalSize * FLAGS_send_index; 
-        requests.emplace_back(entry);
+        requests2.emplace_back(entry);
     }
 
-    s = engine->submitTransfer(batch_id_2, requests);
+    s = engine->submitTransfer(batch_id_2, requests2);
     LOG_ASSERT(s.ok());
     for (int task_id = 0; task_id < FLAGS_batch_size; ++task_id) {
         bool completed = false;
