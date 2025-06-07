@@ -384,19 +384,19 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
         }
         target_key_to_transport_mem_map_[key_str] = transport_mem;
         
-        hccl::TransportMem::RmaMemDesc *arr = (hccl::TransportMem::RmaMemDesc *)malloc(sizeof(hccl::TransportMem::RmaMemDesc) * g_mem_c.size());
-        for (uint32_t i = 0; i < g_mem_c.size(); ++i) {
+        hccl::TransportMem::RmaMemDesc *arr = (hccl::TransportMem::RmaMemDesc *)malloc(sizeof(hccl::TransportMem::RmaMemDesc) * (g_mem_c.size()-1));
+        for (uint32_t i = 1; i < g_mem_c.size(); ++i) {
             hccl::TransportMem::RmaMem localRmaMem = {hccl::RmaMemType::DEVICE, g_mem_c[i], (uint64_t)g_len_c[i]};
             HCCLCHECK(transport_mem->RegMem(localRmaMem, arr[i]));
         }
         uint32_t actualNumOfRemote = 0;
         hccl::TransportMem::RmaMemDescs localRmaMemDescs;
         localRmaMemDescs.array = arr;
-        localRmaMemDescs.arrayLength = g_mem_c.size();
+        localRmaMemDescs.arrayLength = g_mem_c.size() - 1;
         hccl::TransportMem::RmaMemDesc remoteRmaMemDesc;
         hccl::TransportMem::RmaMemDescs remoteRmaMemDescs;
         remoteRmaMemDescs.array = &remoteRmaMemDesc;
-        remoteRmaMemDescs.arrayLength = g_mem_c.size();
+        remoteRmaMemDescs.arrayLength = g_mem_c.size() - 1;
         HCCLCHECK(transport_mem->ExchangeMemDesc(localRmaMemDescs, remoteRmaMemDescs, actualNumOfRemote));
         hccl::TransportMem::RmaMem remoteRmaMem;
         HCCLCHECK(transport_mem->EnableMemAccess(remoteRmaMemDesc, remoteRmaMem));
@@ -618,19 +618,19 @@ int transportMemAccept(RankInfo *local_rank_info) {
         transport_mem = target_key_to_transport_mem_map_[key_str];
     }
 
-    hccl::TransportMem::RmaMemDesc *arr = (hccl::TransportMem::RmaMemDesc *)malloc(sizeof(hccl::TransportMem::RmaMemDesc) * g_mem_c.size());
-    for (uint32_t i = 0; i < g_mem_c.size(); ++i) {
+    hccl::TransportMem::RmaMemDesc *arr = (hccl::TransportMem::RmaMemDesc *)malloc(sizeof(hccl::TransportMem::RmaMemDesc) * (g_mem_c.size()-1));
+    for (uint32_t i = 1; i < g_mem_c.size(); ++i) {
         hccl::TransportMem::RmaMem localRmaMem = {hccl::RmaMemType::DEVICE, g_mem_c[i], (uint64_t)g_len_c[i]};
         HCCLCHECK(transport_mem->RegMem(localRmaMem, arr[i]));
     }
     uint32_t actualNumOfRemote = 0;
     hccl::TransportMem::RmaMemDescs localRmaMemDescs;
     localRmaMemDescs.array = arr;
-    localRmaMemDescs.arrayLength = g_mem_c.size();
+    localRmaMemDescs.arrayLength = g_mem_c.size() - 1;
     hccl::TransportMem::RmaMemDesc remoteRmaMemDesc;
     hccl::TransportMem::RmaMemDescs remoteRmaMemDescs;
     remoteRmaMemDescs.array = &remoteRmaMemDesc;
-    remoteRmaMemDescs.arrayLength = g_mem_c.size();
+    remoteRmaMemDescs.arrayLength = g_mem_c.size() - 1;
     HCCLCHECK(transport_mem->ExchangeMemDesc(localRmaMemDescs, remoteRmaMemDescs, actualNumOfRemote));
     hccl::TransportMem::RmaMem remoteRmaMem;
     HCCLCHECK(transport_mem->EnableMemAccess(remoteRmaMemDesc, remoteRmaMem));
