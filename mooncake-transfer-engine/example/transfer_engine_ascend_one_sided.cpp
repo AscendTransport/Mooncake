@@ -159,6 +159,15 @@ int initiator() {
                                         "npu:" + std::to_string(g_deviceId));
     LOG_ASSERT(!rc);
 
+    void *dev_addr2 = NULL;
+    device_malloc(dev_addr2, FLAGS_block_size * FLAGS_batch_size);
+
+    LOG(INFO) << "dev2_addr_initor: " << dev_addr2;
+
+    rc = engine->registerLocalMemory(dev_addr2, g_TotalSize,
+                                        "npu:" + std::to_string(g_deviceId));
+    LOG_ASSERT(!rc);
+
     auto segment_id = engine->openSegment(FLAGS_segment_id.c_str());
 
     struct timeval start_tv, stop_tv;
@@ -213,6 +222,41 @@ int initiator() {
         }
     }
     LOG(INFO) << "Send OK";
+
+    uint64_t remote_base2 =
+        (uint64_t)segment_desc->buffers[1].addr;   
+
+    auto batch_id_2 = engine->allocateBatchID(FLAGS_batch_size);
+    std::vector<TransferRequest> requests2;
+    for (int i = 0; i < FLAGS_batch_size; ++i) {
+        TransferRequest entry;
+        entry.opcode = opcode;
+        entry.length = FLAGS_block_size;
+        entry.source = (uint8_t *)(dev_addr2) + FLAGS_block_size * i;
+        entry.target_id = segment_id;
+        entry.target_offset = remote_base2 + FLAGS_block_size * i + g_TotalSize * FLAGS_send_index; 
+        requests2.emplace_back(entry);
+    }
+
+    s = engine->submitTransfer(batch_id_2, requests2);
+    LOG_ASSERT(s.ok());
+    for (int task_id = 0; task_id < FLAGS_batch_size; ++task_id) {
+        bool completed = false;
+        TransferStatus status;
+        while (!completed) {
+            s = engine->getTransferStatus(batch_id_2, task_id, status);
+            LOG_ASSERT(s.ok());
+            if (status.s == TransferStatusEnum::COMPLETED)
+                completed = true;
+            else if (status.s == TransferStatusEnum::FAILED) {
+                LOG(INFO) << "FAILED";
+                completed = true;
+                exit(EXIT_FAILURE);
+            }
+        }
+    }
+    LOG(INFO) << "Send2 OK";
+
     gettimeofday(&stop_tv, nullptr);
     uint64_t duration = (stop_tv.tv_sec - start_tv.tv_sec) * 1000000.0 +
                     (stop_tv.tv_usec - start_tv.tv_usec);
@@ -247,7 +291,6 @@ int initiator() {
             (uint64_t)segment_desc_1->buffers[0].addr;   
 
         auto batch_id = engine->allocateBatchID(FLAGS_batch_size);
-        Status s;
         std::vector<TransferRequest> requests;
         for (int i = 0; i < FLAGS_batch_size; ++i) {
             TransferRequest entry;
@@ -310,6 +353,15 @@ int target() {
     LOG(INFO) << "dev_addr_target: " << dev_addr;
 
     int rc = engine->registerLocalMemory(dev_addr, g_TotalSize * FLAGS_recv_num,
+                                        "npu:" + std::to_string(g_deviceId));
+    LOG_ASSERT(!rc);
+
+    void *dev_addr_2 = NULL;
+    device_malloc(dev_addr_2, FLAGS_block_size * FLAGS_batch_size);
+
+    LOG(INFO) << "dev_addr2_target: " << dev_addr_2;
+
+    rc = engine->registerLocalMemory(dev_addr_2, g_TotalSize * FLAGS_recv_num,
                                         "npu:" + std::to_string(g_deviceId));
     LOG_ASSERT(!rc);
 
