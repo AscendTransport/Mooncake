@@ -35,7 +35,7 @@ std::unordered_map<std::string, std::shared_ptr<hccl::TransportMem>>
 std::vector<hccl::TransportMem::RmaMem *> localRmaMem_;
 
 std::vector<void *> g_mem_c;
-std::vector<int> g_len_c;
+std::vector<uint64_t> g_len_c;
 
 int g_server_socket_ = 0;
 struct sockaddr_in g_server_addr_;
@@ -388,6 +388,7 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
         for (uint32_t i = 1; i < g_mem_c.size(); ++i) {
             hccl::TransportMem::RmaMem localRmaMem = {hccl::RmaMemType::DEVICE, g_mem_c[i], (uint64_t)g_len_c[i]};
             HCCLCHECK(transport_mem->RegMem(localRmaMem, arr[i]));
+            LOG(INFO) << "Submit addr2: "  << g_mem_c[i] << "length: " << (uint64_t)g_len_c[i] << "g_len_c[i]:" << g_len_c[i];
         }
         uint32_t actualNumOfRemote = 0;
         hccl::TransportMem::RmaMemDescs localRmaMemDescs;
@@ -444,11 +445,12 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
     LOG(INFO) << "pid: " << pid << "; " << "thread submit one block size: "<< req_len;
     LOG(INFO) << "pid: " << pid << "; " << "thread sync stream spent: "<< duration_sync.count() << "us";
     LOG(INFO) << "pid: " << pid << "; " << "thread call write/read spent: "<< duration_call.count() << "us";
-    return 0;
+    return -1;
 }
 
 static int acceptFromTarget(int port) {
     int client_socket;
+    LOG(INFO) << "acceptFromTarget begin ";
     struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
     client_socket = accept(g_server_socket_, (struct sockaddr*)&client_addr, &client_len);
@@ -468,7 +470,13 @@ int transportMemAccept(RankInfo *local_rank_info) {
     if (client_socket < 0) {
         return -1;
     }
-    LOG(INFO) << "acceptFromTarget OK";
+    LOG(INFO) << "acceptFromTarget OK11111111111111";
+    // client_socket = acceptFromTarget(local_rank_info->hostPort);
+    // if (client_socket < 0) {
+    //     return -1;
+    // }
+
+    // LOG(INFO) << "acceptFromTarget OK22222222222222";
     // 接受控制面发送端的对端信息
     RankControlInfo remote_control_info;
     result = recv(client_socket, &remote_control_info, sizeof(RankControlInfo), 0);
@@ -603,6 +611,7 @@ int transportMemAccept(RankInfo *local_rank_info) {
                         << ", ret: " << ret;
             return -1;
         }
+        LOG(INFO) <<"transport_mem->Connect(120);";
         ret = transport_mem->Connect(120);
         if (ret != HCCL_SUCCESS) {
             char deviceIp[64];
@@ -622,9 +631,11 @@ int transportMemAccept(RankInfo *local_rank_info) {
     for (uint32_t i = 1; i < g_mem_c.size(); ++i) {
         hccl::TransportMem::RmaMem localRmaMem = {hccl::RmaMemType::DEVICE, g_mem_c[i], (uint64_t)g_len_c[i]};
         HCCLCHECK(transport_mem->RegMem(localRmaMem, arr[i]));
+        LOG(INFO) << "Accept addr2: "  << g_mem_c[i] << "length: " << (uint64_t)g_len_c[i] << "g_len_c[i]:" << g_len_c[i] << "g_mem_c.size()" << g_mem_c.size();
     }
     uint32_t actualNumOfRemote = 0;
     hccl::TransportMem::RmaMemDescs localRmaMemDescs;
+    LOG(INFO) << "111111111localRmaMemDescs arr";
     localRmaMemDescs.array = arr;
     localRmaMemDescs.arrayLength = g_mem_c.size() - 1;
     hccl::TransportMem::RmaMemDesc remoteRmaMemDesc;
@@ -632,15 +643,18 @@ int transportMemAccept(RankInfo *local_rank_info) {
     remoteRmaMemDescs.array = &remoteRmaMemDesc;
     remoteRmaMemDescs.arrayLength = g_mem_c.size() - 1;
     HCCLCHECK(transport_mem->ExchangeMemDesc(localRmaMemDescs, remoteRmaMemDescs, actualNumOfRemote));
+    LOG(INFO) << "44444444444transport_mem->ExchangeMemDesc";
     hccl::TransportMem::RmaMem remoteRmaMem;
     HCCLCHECK(transport_mem->EnableMemAccess(remoteRmaMemDesc, remoteRmaMem));
+    LOG(INFO) << "555555555555transport_mem->EnableMemAccess";
 
     return 0;
 }
 
-int regLocalRmaMem(void *addr, int length)
+int regLocalRmaMem(void *addr, uint64_t length)
 {
     // 内存信息保存
+    LOG(INFO) << "regLocalRmaMemaddr: "  << addr << "length: " << length;
     g_mem_c.push_back(addr);
     g_len_c.push_back(length);
     return 0;
