@@ -562,8 +562,10 @@ int transportMemAccept(RankInfo *local_rank_info) {
     remoteRmaMemDescs.arrayLength = g_mem_c.size();
     LOG(INFO) << "333333333333transport_mem->ExchangeMemDesc";
     HCCLCHECK(transport_mem->ExchangeMemDesc(localRmaMemDescs, remoteRmaMemDescs, actualNumOfRemote));
+    LOG(INFO) << "44444444444transport_mem->ExchangeMemDesc";
     hccl::TransportMem::RmaMem remoteRmaMem;
     HCCLCHECK(transport_mem->EnableMemAccess(remoteRmaMemDesc, remoteRmaMem));
+    LOG(INFO) << "555555555555transport_mem->EnableMemAccess";
 
     return 0;
 }
