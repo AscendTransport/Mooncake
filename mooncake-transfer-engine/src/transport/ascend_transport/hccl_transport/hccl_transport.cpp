@@ -70,8 +70,11 @@ void HcclTransport::initiatorLoop(int deviceLogicId, int selfIdx){
             LOG(ERROR) << "HcclTransport: transportMemTask error, ret:" << ret;
             slice->markFailed();
         } else {
+            LOG(INFO) << "success 5555555555";
             slice->markSuccess();
+            LOG(INFO) << "success 66666666666666";
             slice->task->transferred_bytes = slice->length;
+            LOG(INFO) << "success 7777777777777777";
         }
     }
 }
