@@ -399,7 +399,7 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
     LOG(INFO) << "pid: " << pid << "; " << "thread submit one block size: "<< req_len;
     LOG(INFO) << "pid: " << pid << "; " << "thread sync stream spent: "<< duration_sync.count() << "us";
     LOG(INFO) << "pid: " << pid << "; " << "thread call write/read spent: "<< duration_call.count() << "us";
-    return 0;
+    return -1;
 }
 
 static int acceptFromTarget(int port) {
