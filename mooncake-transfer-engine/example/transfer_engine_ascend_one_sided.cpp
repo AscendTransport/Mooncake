@@ -227,7 +227,6 @@ int initiator() {
         (uint64_t)segment_desc->buffers[1].addr;   
 
     auto batch_id_2 = engine->allocateBatchID(FLAGS_batch_size);
-    s;
     std::vector<TransferRequest> requests2;
     for (int i = 0; i < FLAGS_batch_size; ++i) {
         TransferRequest entry;
@@ -245,7 +244,7 @@ int initiator() {
         bool completed = false;
         TransferStatus status;
         while (!completed) {
-            Status s = engine->getTransferStatus(batch_id_2, task_id, status);
+            s = engine->getTransferStatus(batch_id_2, task_id, status);
             LOG_ASSERT(s.ok());
             if (status.s == TransferStatusEnum::COMPLETED)
                 completed = true;
@@ -292,7 +291,6 @@ int initiator() {
             (uint64_t)segment_desc_1->buffers[0].addr;   
 
         auto batch_id = engine->allocateBatchID(FLAGS_batch_size);
-        Status s;
         std::vector<TransferRequest> requests;
         for (int i = 0; i < FLAGS_batch_size; ++i) {
             TransferRequest entry;
