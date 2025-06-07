@@ -20,11 +20,14 @@ extern "C" {
 std::condition_variable initiator_cond_;
 std::string baseTag_ = "transport_mem";
 std::unique_ptr<hccl::NotifyPool> notifyPool_;
-HcclNetDevCtx vnicNetDevCtx_{nullptr};
 HcclDispatcher dispatcher_{nullptr};
+
+HcclNetDevCtx vnicNetDevCtx_{nullptr};
+HcclNetDevCtx nicNetDevCtx_{nullptr};
 
 std::vector<std::shared_ptr<hccl::HcclSocket>> clientSocketVec_;
 std::shared_ptr<hccl::HcclSocket> vnicServerSocket_{nullptr};
+std::shared_ptr<hccl::HcclSocket> nicServerSocket_{nullptr};
 
 std::unordered_map<std::string, int>  target_key_to_control_socket_map_;
 std::unordered_map<std::string, std::shared_ptr<hccl::TransportMem>> 
@@ -46,6 +49,31 @@ static int initServerNetSocket(RankInfo *local_rank_info){
         return -1;
     }
 
+    hccl::HcclIpAddress localIp(local_rank_info->deviceIp);
+    ret = HcclNetOpenDev(&nicNetDevCtx_, NicType::DEVICE_NIC_TYPE, 
+                         local_rank_info->devicePhyId,
+                         local_rank_info->deviceLogicId, localIp);
+    if (ret != HCCL_SUCCESS) {
+        LOG(ERROR) << "HcclNetOpenDev DEVICE_NIC_TYPE failed, ret: " << ret;
+        return -1;
+    }
+
+    nicServerSocket_ = std::make_shared<hccl::HcclSocket>(nicNetDevCtx_, local_rank_info->devicePort);
+    if (nicServerSocket_ == NULL) {
+        LOG(ERROR) << "make nicNetDevCtx_ failed";
+        return -1;
+    }
+    ret = nicServerSocket_->Init();
+    if (ret != HCCL_SUCCESS) {
+        LOG(ERROR) << "nicServerSocket_ Init failed, ret: " << ret;
+        return -1;
+    }
+    ret = nicServerSocket_->Listen();
+    if (ret != HCCL_SUCCESS) {
+        LOG(ERROR) << "vnicServerSocket_ Listen failed, ret: " << ret;
+        return -1;
+    }
+
     hccl::HcclIpAddress localVnicIp(local_rank_info->devicePhyId);
     ret = hrtRaGetSingleSocketVnicIpInfo(
         local_rank_info->devicePhyId, DeviceIdType::DEVICE_ID_TYPE_PHY_ID, 
@@ -59,7 +87,7 @@ static int initServerNetSocket(RankInfo *local_rank_info){
                          local_rank_info->devicePhyId, 
                          local_rank_info->deviceLogicId, localVnicIp);
     if (ret != HCCL_SUCCESS) {
-        LOG(ERROR) << "HcclNetOpenDev failed, ret: " << ret;
+        LOG(ERROR) << "HcclNetOpenDev vnicNetDevCtx_ failed, ret: " << ret;
         return -1;
     }
 
@@ -208,6 +236,7 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
     control_info.deviceLogicId = local_rank_info->deviceLogicId;
     control_info.devicePhyId = local_rank_info->devicePhyId;
     control_info.hostIp = local_rank_info->hostIp;
+    control_info.deviceIp = local_rank_info->deviceIp;
     // 2、查找对端，检查是否具备对应的socket，并发送本端的信息给对端
     std::string key_str = inet_ntoa(remote_rank_info->hostIp) + std::to_string(remote_rank_info->devicePhyId);
     auto iter = target_key_to_control_socket_map_.find(key_str);
@@ -230,20 +259,32 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
     int remoteDevicePort = remote_rank_info->devicePort;
     std::shared_ptr<hccl::TransportMem> transport_mem{};
     auto iter_mem = target_key_to_transport_mem_map_.find(key_str);
+    bool is_cross_host = local_rank_info->hostIp.s_addr == remote_rank_info->hostIp.s_addr ? false : true;
     if (iter_mem == target_key_to_transport_mem_map_.end()) {
-        std::vector<unsigned int> remoteDevPhyId;
-        remoteDevPhyId.push_back(remote_rank_info->devicePhyId);
-        HCCLCHECK(hccl::P2PMgmtPub::EnableP2P(remoteDevPhyId));
-        HCCLCHECK(hccl::P2PMgmtPub::WaitP2PEnabled(remoteDevPhyId));
+        std::shared_ptr<hccl::HcclSocket> hccl_socket;
+        hccl::HcclIpAddress remoteIp;
+        //单机场景
+        if (!is_cross_host) {
+            std::vector<unsigned int> remoteDevPhyId;
+            remoteDevPhyId.push_back(remote_rank_info->devicePhyId);
+            HCCLCHECK(hccl::P2PMgmtPub::EnableP2P(remoteDevPhyId));
+            HCCLCHECK(hccl::P2PMgmtPub::WaitP2PEnabled(remoteDevPhyId));
+            remoteIp =  hccl::HcclIpAddress (remote_rank_info->devicePhyId);
+            HCCLCHECK(hrtRaGetSingleSocketVnicIpInfo(local_rank_info->devicePhyId,
+                                                DeviceIdType::DEVICE_ID_TYPE_PHY_ID,
+                                                remote_rank_info->devicePhyId, remoteIp));
+            std::shared_ptr<hccl::HcclSocket> hccl_socket = 
+                std::make_shared<hccl::HcclSocket>(
+                    baseTag_, vnicNetDevCtx_, remoteIp, remoteDevicePort,
+                    hccl::HcclSocketRole::SOCKET_ROLE_CLIENT);
+        } else {
+            remoteIp =  hccl::HcclIpAddress (remote_rank_info->deviceIp);
+            std::shared_ptr<hccl::HcclSocket> hccl_socket = 
+                std::make_shared<hccl::HcclSocket>(
+                    baseTag_, nicNetDevCtx_, remoteIp, remoteDevicePort,
+                    hccl::HcclSocketRole::SOCKET_ROLE_CLIENT);
+        }
 
-        hccl::HcclIpAddress remoteIp(remote_rank_info->devicePhyId);
-        HCCLCHECK(hrtRaGetSingleSocketVnicIpInfo(local_rank_info->devicePhyId,
-                                            DeviceIdType::DEVICE_ID_TYPE_PHY_ID,
-                                            remote_rank_info->devicePhyId, remoteIp));
-        std::shared_ptr<hccl::HcclSocket> hccl_socket = 
-            std::make_shared<hccl::HcclSocket>(
-                baseTag_, vnicNetDevCtx_, remoteIp, remoteDevicePort,
-                hccl::HcclSocketRole::SOCKET_ROLE_CLIENT);
         ret = hccl_socket->Init();
         if (ret != HCCL_SUCCESS) {
             char deviceIp[64];
@@ -297,10 +338,16 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
         attrInfo.remoteRankId = remote_rank_info->deviceLogicId;
         attrInfo.sdid = 0xFFFFFFFF;
         attrInfo.serverId = local_rank_info->serverIdx;
-        transport_mem = hccl::TransportMem::Create(
-            hccl::TransportMem::TpType::IPC, notifyPool_, vnicNetDevCtx_, 
-            dispatcher_, attrInfo);
-        
+        if (is_cross_host) {
+            transport_mem = hccl::TransportMem::Create(
+                hccl::TransportMem::TpType::ROCE, notifyPool_, nicNetDevCtx_, 
+                dispatcher_, attrInfo);
+        } else {
+            transport_mem = hccl::TransportMem::Create(
+                hccl::TransportMem::TpType::IPC, notifyPool_, vnicNetDevCtx_, 
+                dispatcher_, attrInfo);
+        }
+
         ret = transport_mem->SetDataSocket(hccl_socket);
         if (ret != HCCL_SUCCESS) {
             char deviceIp[64];
@@ -439,38 +486,63 @@ int transportMemAccept(RankInfo *local_rank_info) {
               << remote_control_info.deviceLogicId
               << ", devicePhyId: " << remote_control_info.devicePhyId
               << ", hostIp: " << inet_ntoa(remote_control_info.hostIp);
-
-    std::vector<unsigned int> remoteDevPhyId;
-    remoteDevPhyId.push_back(remote_control_info.devicePhyId);
-    HCCLCHECK(hccl::P2PMgmtPub::EnableP2P(remoteDevPhyId));
-    HCCLCHECK(hccl::P2PMgmtPub::WaitP2PEnabled(remoteDevPhyId));
-
-    hccl::HcclIpAddress remoteIp(remote_control_info.devicePhyId);
-    HCCLCHECK(hrtRaGetSingleSocketVnicIpInfo(local_rank_info->devicePhyId,
-                                            DeviceIdType::DEVICE_ID_TYPE_PHY_ID,
-                                            remote_control_info.devicePhyId,
-                                            remoteIp));
-
-    std::vector<SocketWlistInfo> wlistInfoVec;
-    SocketWlistInfo wlistInfo = {};
-    wlistInfo.connLimit = 1;
-    memcpy(&wlistInfo.tag[0], baseTag_.c_str(), baseTag_.size() + 1);
-    wlistInfo.remoteIp.addr = remoteIp.GetBinaryAddress().addr;
-    wlistInfo.remoteIp.addr6 = remoteIp.GetBinaryAddress().addr6;
-    wlistInfoVec.push_back(wlistInfo);
-
-    int ret = vnicServerSocket_->AddWhiteList(wlistInfoVec);
-    if (ret != HCCL_SUCCESS) {
-        LOG(ERROR) << "vnicServerSocket_ AddWhiteList failed, ret: " << ret;
-        return -1;
-    }
-    // 接收数据面socket
+    hccl::HcclIpAddress remoteIp;
     std::shared_ptr<hccl::HcclSocket> hccl_socket;
-    ret = vnicServerSocket_->Accept(baseTag_, hccl_socket);
-    if (ret != 0) {
-        LOG(ERROR) << "transportMemAccept failed ret:" << ret;
-        return -1;
+    bool is_cross_host = local_rank_info->hostIp.s_addr == remote_control_info->hostIp.s_addr ? false : true;
+    if (!is_cross_host) {
+        std::vector<unsigned int> remoteDevPhyId;
+        remoteDevPhyId.push_back(remote_control_info.devicePhyId);
+        HCCLCHECK(hccl::P2PMgmtPub::EnableP2P(remoteDevPhyId));
+        HCCLCHECK(hccl::P2PMgmtPub::WaitP2PEnabled(remoteDevPhyId));
+
+        remoteIp = hccl::HcclIpAddress(remote_control_info.devicePhyId);
+        HCCLCHECK(hrtRaGetSingleSocketVnicIpInfo(local_rank_info->devicePhyId,
+                                                DeviceIdType::DEVICE_ID_TYPE_PHY_ID,
+                                                remote_control_info.devicePhyId,
+                                                remoteIp));
+
+        std::vector<SocketWlistInfo> wlistInfoVec;
+        SocketWlistInfo wlistInfo = {};
+        wlistInfo.connLimit = 1;
+        memcpy(&wlistInfo.tag[0], baseTag_.c_str(), baseTag_.size() + 1);
+        wlistInfo.remoteIp.addr = remoteIp.GetBinaryAddress().addr;
+        wlistInfo.remoteIp.addr6 = remoteIp.GetBinaryAddress().addr6;
+        wlistInfoVec.push_back(wlistInfo);
+
+        int ret = vnicServerSocket_->AddWhiteList(wlistInfoVec);
+        if (ret != HCCL_SUCCESS) {
+            LOG(ERROR) << "vnicServerSocket_ AddWhiteList failed, ret: " << ret;
+            return -1;
+        }
+        // 接收数据面socket
+        ret = vnicServerSocket_->Accept(baseTag_, hccl_socket);
+        if (ret != 0) {
+            LOG(ERROR) << "vnicServerSocket_ transportMemAccept failed ret:" << ret;
+            return -1;
+        }
+    } else {
+        remoteIp = hccl::HcclIpAddress(remote_control_info.deviceIp);
+        std::vector<SocketWlistInfo> wlistInfoVec;
+        SocketWlistInfo wlistInfo = {};
+        wlistInfo.connLimit = 1;
+        memcpy(&wlistInfo.tag[0], baseTag_.c_str(), baseTag_.size() + 1);
+        wlistInfo.remoteIp.addr = remoteIp.GetBinaryAddress().addr;
+        wlistInfo.remoteIp.addr6 = remoteIp.GetBinaryAddress().addr6;
+        wlistInfoVec.push_back(wlistInfo);
+
+        int ret = nicServerSocket_->AddWhiteList(wlistInfoVec);
+        if (ret != HCCL_SUCCESS) {
+            LOG(ERROR) << "nicServerSocket_ AddWhiteList failed, ret: " << ret;
+            return -1;
+        }
+        // 接收数据面socket
+        ret = nicServerSocket_->Accept(baseTag_, hccl_socket);
+        if (ret != 0) {
+            LOG(ERROR) << "nicServerSocket_ transportMemAccept failed ret:" << ret;
+            return -1;
+        }
     }
+
     // 根据host_ip+device_id，查找对应是否存在TransportMem
     std::shared_ptr<hccl::TransportMem> transport_mem{};
     std::string key_str = inet_ntoa(remote_control_info.hostIp) + std::to_string(remote_control_info.devicePhyId);
@@ -501,10 +573,15 @@ int transportMemAccept(RankInfo *local_rank_info) {
         attrInfo.remoteRankId = remote_control_info.deviceLogicId;
         attrInfo.sdid = 0xFFFFFFFF;
         attrInfo.serverId = local_rank_info->serverIdx;
-        transport_mem = hccl::TransportMem::Create(
-            hccl::TransportMem::TpType::IPC, notifyPool_, vnicNetDevCtx_, 
-            dispatcher_, attrInfo);
-
+        if (is_cross_host) {
+            transport_mem = hccl::TransportMem::Create(
+                hccl::TransportMem::TpType::ROCE, notifyPool_, nicNetDevCtx_, 
+                dispatcher_, attrInfo);
+        } else {
+            transport_mem = hccl::TransportMem::Create(
+                hccl::TransportMem::TpType::IPC, notifyPool_, vnicNetDevCtx_, 
+                dispatcher_, attrInfo);
+        }
         ret = transport_mem->SetDataSocket(hccl_socket);
         if (ret != HCCL_SUCCESS) {
             char deviceIp[64];

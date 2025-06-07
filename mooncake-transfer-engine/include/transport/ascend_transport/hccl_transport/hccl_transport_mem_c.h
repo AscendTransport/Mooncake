@@ -49,6 +49,7 @@ struct RankControlInfo {
     int deviceLogicId;
     int devicePhyId;
     struct in_addr hostIp;
+    struct in_addr deviceIp;
 };
 
 
