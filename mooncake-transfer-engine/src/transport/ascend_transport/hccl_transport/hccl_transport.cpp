@@ -66,6 +66,7 @@ void HcclTransport::initiatorLoop(int deviceLogicId, int selfIdx){
 
         ret = transportMemTask(&local_rank_info_, &remote_rank_info_, slice->opcode,
             slice->hccl.dest_addr, slice->length, slice->source_addr, stream);
+        LOG(INFO) << "success 44444";
         if (ret != HCCL_SUCCESS){
             LOG(ERROR) << "HcclTransport: transportMemTask error, ret:" << ret;
             slice->markFailed();
