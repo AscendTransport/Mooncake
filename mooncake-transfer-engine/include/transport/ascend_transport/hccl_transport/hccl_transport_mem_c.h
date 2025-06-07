@@ -46,9 +46,10 @@ struct RankInfo {
 };
 
 struct RankControlInfo {
-    int deviceLogicId;
-    int devicePhyId;
+    uint64_t deviceLogicId;
+    uint64_t devicePhyId;
     struct in_addr hostIp;
+    struct in_addr deviceIp;
 };
 
 

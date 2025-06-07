@@ -416,12 +416,3 @@ int main(int argc, char **argv) {
     LOG(ERROR) << "Unsupported mode: must be 'initiator' or 'target'";
     exit(EXIT_FAILURE);
 }
-
-
-
-
-
-
-
-
-
