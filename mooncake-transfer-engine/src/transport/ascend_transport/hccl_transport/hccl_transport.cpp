@@ -36,11 +36,12 @@ void HcclTransport::initiatorLoop(int deviceLogicId, int selfIdx){
         return;
     }
     while(1) {
+        LOG(INFO) << "initiator_mutex_ OK11111111111111";
         std::unique_lock<std::mutex> lock(initiator_mutex_);
         if (allReqQueues_[selfIdx].empty()){
             initiator_cond_.wait(lock);
         }
-
+        LOG(INFO) << "move OK22222";
         auto slice = std::move(allReqQueues_[selfIdx].front());
         allReqQueues_[selfIdx].pop();
         lock.unlock();
@@ -49,6 +50,7 @@ void HcclTransport::initiatorLoop(int deviceLogicId, int selfIdx){
             LOG(ERROR) << "Unable to get target segment ID, please recheck";
             return;
         }
+        LOG(INFO) << "segment_desc OK333333333";
         // the sender deviceLogicId is 0
         local_rank_info_.deviceLogicId = 1;
         remote_rank_info_.rankId = segment_desc->rank_info.rankId;
@@ -59,6 +61,8 @@ void HcclTransport::initiatorLoop(int deviceLogicId, int selfIdx){
         inet_pton(AF_INET, segment_desc->rank_info.deviceIp.c_str(), &remote_rank_info_.deviceIp);
         remote_rank_info_.devicePort = segment_desc->rank_info.devicePort;
         remote_rank_info_.serverIdx = 0;
+
+        LOG(INFO) << "transportMemTask OK4444444444444";
 
         ret = transportMemTask(&local_rank_info_, &remote_rank_info_, slice->opcode,
             slice->hccl.dest_addr, slice->length, slice->source_addr, stream);
