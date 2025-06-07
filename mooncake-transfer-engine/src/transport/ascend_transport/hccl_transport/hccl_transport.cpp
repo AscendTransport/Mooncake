@@ -79,6 +79,7 @@ void HcclTransport::acceptLoop(int deviceLogicId){
         return;
     }
     while(1) {
+        LOG(INFO) << "transportMemAccept OK11111111111111";
         ret = transportMemAccept(&local_rank_info_);
         if (ret) {
             LOG(ERROR) << "HcclTransport: transportMemAccept failed ret:" << ret;
