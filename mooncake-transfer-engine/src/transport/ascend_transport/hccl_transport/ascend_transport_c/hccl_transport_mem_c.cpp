@@ -528,7 +528,7 @@ int transportMemAccept(RankInfo *local_rank_info) {
                         << ", ret: " << ret;
             return -1;
         }
-        LOG(INFO) <<"transport_mem->Connect(120);"
+        LOG(INFO) <<"transport_mem->Connect(120);";
         ret = transport_mem->Connect(120);
         if (ret != HCCL_SUCCESS) {
             char deviceIp[64];
