@@ -425,12 +425,12 @@ int transportMemAccept(RankInfo *local_rank_info) {
         return -1;
     }
     LOG(INFO) << "acceptFromTarget OK11111111111111";
-    client_socket = acceptFromTarget(local_rank_info->hostPort);
-    if (client_socket < 0) {
-        return -1;
-    }
+    // client_socket = acceptFromTarget(local_rank_info->hostPort);
+    // if (client_socket < 0) {
+    //     return -1;
+    // }
 
-    LOG(INFO) << "acceptFromTarget OK22222222222222";
+    // LOG(INFO) << "acceptFromTarget OK22222222222222";
     // 接受控制面发送端的对端信息
     RankControlInfo remote_control_info;
     result = recv(client_socket, &remote_control_info, sizeof(RankControlInfo), 0);
