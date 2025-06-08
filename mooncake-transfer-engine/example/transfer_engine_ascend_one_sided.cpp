@@ -34,21 +34,18 @@
 
 static std::string getHostname();
 
-DEFINE_string(local_server_name, getHostname(),
+DEFINE_string(local_server_name, "10.20.130.154:12345",
               "Local server name for segment discovery");
-DEFINE_string(metadata_server, "10.244.182.87:2379", "etcd server host address");
+DEFINE_string(metadata_server, "P2PHANDSHAKE", "etcd server host address");
 DEFINE_string(mode, "initiator",
               "Running mode: initiator or target. Initiator node read/write "
               "data blocks from target node");
-DEFINE_string(operation, "read", "Operation type: read or write");
-
+DEFINE_string(operation, "write", "Operation type: read or write");
 DEFINE_string(protocol, "hccl", "Transfer protocol: rdma|tcp|hccl");
-
-DEFINE_string(segment_id, "192.168.3.76", "Segment ID to access data");
+DEFINE_string(segment_id, "10.20.130.154:12346", "Segment ID to access data");
 DEFINE_int32(batch_size, 20, "Batch size");
-DEFINE_uint64(block_size, 131072, "Block size for each transfer request");
+DEFINE_uint64(block_size, 8388608, "Block size for each transfer request");
 DEFINE_bool(auto_discovery, false, "Enable auto discovery");
-
 DEFINE_uint64(device_id, 0, "The device ID of this machine");
 DEFINE_string(segment_id_1, "NA", "A segment ID that a sender wants to another receiver");
 DEFINE_uint64(recv_num, 1, "Num of coonections received by the receiver");
@@ -61,15 +58,6 @@ using namespace mooncake;
 int g_deviceId = 0;
 uint64_t g_TotalSize = 0;
 #define HOST_BUFFER_SIZE 0x1000
-
-static std::string getHostname() {
-    char hostname[256];
-    if (gethostname(hostname, 256)) {
-        PLOG(ERROR) << "Failed to get hostname";
-        return "";
-    }
-    return hostname;
-}
 
 const static std::unordered_map<std::string, uint64_t> RATE_UNIT_MP = {
     {"GB", 1000ull * 1000ull * 1000ull},
@@ -200,7 +188,7 @@ int initiator() {
         exit(EXIT_FAILURE);
     }
     uint64_t remote_base =
-        (uint64_t)segment_desc->buffers[0].addr;   
+        (uint64_t)segment_desc->buffers[1].addr;   
 
     auto batch_id = engine->allocateBatchID(FLAGS_batch_size);
     Status s;
@@ -235,7 +223,7 @@ int initiator() {
     LOG(INFO) << "Send OK";
 
     uint64_t remote_base2 =
-        (uint64_t)segment_desc->buffers[1].addr;   
+        (uint64_t)segment_desc->buffers[2].addr;   
 
     auto batch_id_2 = engine->allocateBatchID(FLAGS_batch_size);
     std::vector<TransferRequest> requests2;
@@ -299,7 +287,7 @@ int initiator() {
             exit(EXIT_FAILURE);
         }
         uint64_t remote_base_1 =
-            (uint64_t)segment_desc_1->buffers[0].addr;   
+            (uint64_t)segment_desc_1->buffers[1].addr;   
 
         auto batch_id = engine->allocateBatchID(FLAGS_batch_size);
         std::vector<TransferRequest> requests;
