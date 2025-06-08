@@ -336,29 +336,27 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
         }
         target_key_to_transport_mem_map_[key_str] = transport_mem;
 
-        std::vector<hccl::TransportMem::RmaMemDesc> rmaMemDescs(g_mem_c.size());
-        for (size_t i = 0; i < g_mem_c.size(); ++i) {
-            LOG(INFO) << "Submit addr: " << g_mem_c[i] 
-                    << " length: " << (uint64_t)g_len_c[i] 
-                    << " index: " << i 
-                    << " size: " << g_mem_c.size();
-            hccl::TransportMem::RmaMem localRmaMem = {hccl::RmaMemType::DEVICE, g_mem_c[i], (uint64_t)g_len_c[i]};
+        // 适配vllm，初始化会单独注册一块host内存，2G大小，交换内存时不做处理
+        size_t m_num = g_mem_c.size() - 1;
+        std::vector<hccl::TransportMem::RmaMemDesc> rmaMemDescs(m_num);
+        // 第一块内存是host内存，交换内存时不做处理
+        for (size_t i = 0; i < m_num; ++i) {
+            hccl::TransportMem::RmaMem localRmaMem = {hccl::RmaMemType::DEVICE, g_mem_c[i + 1], (uint64_t)g_len_c[i + 1]};
             HCCLCHECK(transport_mem->RegMem(localRmaMem, rmaMemDescs[i]));
         }
         hccl::TransportMem::RmaMemDescs localRmaMemDescs;
         localRmaMemDescs.array = rmaMemDescs.data();
         localRmaMemDescs.arrayLength = rmaMemDescs.size();
         uint32_t actualNumOfRemote = 0;
-        std::vector<hccl::TransportMem::RmaMemDesc> remoteRmaMemDescArray(g_mem_c.size());
+        std::vector<hccl::TransportMem::RmaMemDesc> remoteRmaMemDescArray(m_num);
         hccl::TransportMem::RmaMemDescs remoteRmaMemDescs;
         remoteRmaMemDescs.array = remoteRmaMemDescArray.data();
-        remoteRmaMemDescs.arrayLength = g_mem_c.size();
+        remoteRmaMemDescs.arrayLength = m_num;
         HCCLCHECK(transport_mem->ExchangeMemDesc(localRmaMemDescs, remoteRmaMemDescs, actualNumOfRemote));
-        std::vector<hccl::TransportMem::RmaMem> remoteRmaMemArray(g_mem_c.size());
-        for (uint32_t i = 0; i < g_mem_c.size(); ++i) {
+        std::vector<hccl::TransportMem::RmaMem> remoteRmaMemArray(m_num);
+        for (uint32_t i = 0; i < m_num; ++i) {
             HCCLCHECK(transport_mem->EnableMemAccess(remoteRmaMemDescArray[i], remoteRmaMemArray[i]));
         }
-
     } else {
         transport_mem = target_key_to_transport_mem_map_[key_str];
     }
@@ -546,22 +544,25 @@ int transportMemAccept(RankInfo *local_rank_info) {
         transport_mem = target_key_to_transport_mem_map_[key_str];
     }
 
-    std::vector<hccl::TransportMem::RmaMemDesc> rmaMemDescs(g_mem_c.size());
-    for (size_t i = 0; i < g_mem_c.size(); ++i) {
-        hccl::TransportMem::RmaMem localRmaMem = {hccl::RmaMemType::DEVICE, g_mem_c[i], (uint64_t)g_len_c[i]};
+    // 适配vllm，初始化会单独注册一块host内存，2G大小，交换内存时不做处理
+    size_t m_num = g_mem_c.size() - 1;
+    std::vector<hccl::TransportMem::RmaMemDesc> rmaMemDescs(m_num);
+    // 第一块内存是host内存，交换内存时不做处理
+    for (size_t i = 0; i < m_num; ++i) {
+        hccl::TransportMem::RmaMem localRmaMem = {hccl::RmaMemType::DEVICE, g_mem_c[i + 1], (uint64_t)g_len_c[i + 1]};
         HCCLCHECK(transport_mem->RegMem(localRmaMem, rmaMemDescs[i]));
     }
     hccl::TransportMem::RmaMemDescs localRmaMemDescs;
     localRmaMemDescs.array = rmaMemDescs.data();
     localRmaMemDescs.arrayLength = rmaMemDescs.size();
     uint32_t actualNumOfRemote = 0;
-    std::vector<hccl::TransportMem::RmaMemDesc> remoteRmaMemDescArray(g_mem_c.size());
+    std::vector<hccl::TransportMem::RmaMemDesc> remoteRmaMemDescArray(m_num);
     hccl::TransportMem::RmaMemDescs remoteRmaMemDescs;
     remoteRmaMemDescs.array = remoteRmaMemDescArray.data();
-    remoteRmaMemDescs.arrayLength = g_mem_c.size();
+    remoteRmaMemDescs.arrayLength = m_num;
     HCCLCHECK(transport_mem->ExchangeMemDesc(localRmaMemDescs, remoteRmaMemDescs, actualNumOfRemote));
-    std::vector<hccl::TransportMem::RmaMem> remoteRmaMemArray(g_mem_c.size());
-    for (uint32_t i = 0; i < g_mem_c.size(); ++i) {
+    std::vector<hccl::TransportMem::RmaMem> remoteRmaMemArray(m_num);
+    for (uint32_t i = 0; i < m_num; ++i) {
         HCCLCHECK(transport_mem->EnableMemAccess(remoteRmaMemDescArray[i], remoteRmaMemArray[i]));
     }
 

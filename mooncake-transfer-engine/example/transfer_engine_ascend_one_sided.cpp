@@ -60,6 +60,7 @@ using namespace mooncake;
 
 int g_deviceId = 0;
 uint64_t g_TotalSize = 0;
+#define HOST_BUFFER_SIZE 0x1000
 
 static std::string getHostname() {
     char hostname[256];
@@ -149,6 +150,16 @@ int initiator() {
     std::string FLAGS_local_server_name_new = hostname_port.first + ":" + std::to_string(hostname_port.second) + ":npu_" + std::to_string(g_deviceId);
     engine->init(FLAGS_metadata_server, FLAGS_local_server_name_new.c_str(),
                  hostname_port.first.c_str(), hostname_port.second);
+    
+    // 注册一块host内存，和vllm-connector场景保持一致Add commentMore actions
+    void* host_addr = nullptr;
+    ret = aclrtMallocHost(&host_addr, HOST_BUFFER_SIZE);
+    if (ret != ACL_ERROR_NONE || host_addr == NULL) {
+        printf("Failed to allocate host memory, ret:%d\n", ret);
+        return -1;
+    }
+
+    ret = engine->registerLocalMemory(host_addr, HOST_BUFFER_SIZE, "cpu");
 
     void *dev_addr = NULL;
     device_malloc(dev_addr, FLAGS_block_size * FLAGS_batch_size);
@@ -325,6 +336,11 @@ int initiator() {
         LOG_ASSERT(s.ok());
     }
 
+    //release resource
+    aclrtFreeHost(host_addr);
+    aclrtFree(dev_addr);
+    aclrtFree(dev_addr2);
+
     return 0;
 }
 
@@ -346,6 +362,17 @@ int target() {
     std::string FLAGS_local_server_name_new = hostname_port.first + ":" + std::to_string(hostname_port.second) + ":npu_" + std::to_string(g_deviceId);
     engine->init(FLAGS_metadata_server, FLAGS_local_server_name_new.c_str(),
                  hostname_port.first.c_str(), hostname_port.second);
+    
+    // 注册一块host内存，和vllm-connector场景保持一致Add commentMore actions
+    void* host_addr = nullptr;
+    ret = aclrtMallocHost(&host_addr, HOST_BUFFER_SIZE);
+    if (ret != ACL_ERROR_NONE || host_addr == NULL) {
+        printf("Failed to allocate host memory, ret:%d\n", ret);
+        return -1;
+    }
+
+    ret = engine->registerLocalMemory(host_addr, HOST_BUFFER_SIZE,
+                                        "cpu");
 
     void *dev_addr = NULL;
     device_malloc(dev_addr, FLAGS_block_size * FLAGS_batch_size);
@@ -356,16 +383,21 @@ int target() {
                                         "npu:" + std::to_string(g_deviceId));
     LOG_ASSERT(!rc);
 
-    void *dev_addr_2 = NULL;
-    device_malloc(dev_addr_2, FLAGS_block_size * FLAGS_batch_size);
+    void *dev_addr2 = NULL;
+    device_malloc(dev_addr2, FLAGS_block_size * FLAGS_batch_size);
 
-    LOG(INFO) << "dev_addr2_target: " << dev_addr_2;
+    LOG(INFO) << "dev_addr2_target: " << dev_addr2;
 
-    rc = engine->registerLocalMemory(dev_addr_2, g_TotalSize * FLAGS_recv_num,
+    rc = engine->registerLocalMemory(dev_addr2, g_TotalSize * FLAGS_recv_num,
                                         "npu:" + std::to_string(g_deviceId));
     LOG_ASSERT(!rc);
 
     while (target_running) sleep(1);
+
+    //release resource
+    aclrtFreeHost(host_addr);
+    aclrtFree(dev_addr);
+    aclrtFree(dev_addr2);
     
     return 0;
 }
