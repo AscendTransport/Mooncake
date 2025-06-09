@@ -32,8 +32,6 @@
 #include "acl/acl.h"
 #include "hccl/hccl.h"
 
-static std::string getHostname();
-
 DEFINE_string(local_server_name, "10.20.130.154:12345",
               "Local server name for segment discovery");
 DEFINE_string(metadata_server, "P2PHANDSHAKE", "etcd server host address");
