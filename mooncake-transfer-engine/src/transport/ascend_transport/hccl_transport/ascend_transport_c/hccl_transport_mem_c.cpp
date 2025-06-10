@@ -275,12 +275,24 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
         if (!is_cross_hccs) {
             std::vector<unsigned int> remoteDevPhyId;
             remoteDevPhyId.push_back(remote_rank_info->devicePhyId);
-            HCCLCHECK(hccl::P2PMgmtPub::EnableP2P(remoteDevPhyId));
-            HCCLCHECK(hccl::P2PMgmtPub::WaitP2PEnabled(remoteDevPhyId));
+            ret = hccl::P2PMgmtPub::EnableP2P(remoteDevPhyId);
+            if (ret) {
+                LOG(ERROR) << "P2PMgmtPub EnableP2P faield, ret:" << ret;
+                return -1;
+            }
+            ret = hccl::P2PMgmtPub::WaitP2PEnabled(remoteDevPhyId);
+            if (ret) {
+                LOG(ERROR) << "P2PMgmtPub EnableP2P faield, ret:" << ret;
+                return -1;
+            }
             rempoteDevIp = hccl::HcclIpAddress (remote_rank_info->devicePhyId);
-            HCCLCHECK(hrtRaGetSingleSocketVnicIpInfo(local_rank_info->devicePhyId,
+            ret = hrtRaGetSingleSocketVnicIpInfo(local_rank_info->devicePhyId,
                                                 DeviceIdType::DEVICE_ID_TYPE_PHY_ID,
-                                                remote_rank_info->devicePhyId, rempoteDevIp));
+                                                remote_rank_info->devicePhyId, rempoteDevIp);
+            if (ret) {
+                LOG(ERROR) << "hrtRaGetSingleSocketVnicIpInfo, ret:" << ret;
+                return -1;
+            }                                    
             hccl_socket = std::make_shared<hccl::HcclSocket>(
                     baseTag_, vnicNetDevCtx_, rempoteDevIp, remote_rank_info->devicePort,
                     hccl::HcclSocketRole::SOCKET_ROLE_CLIENT);
@@ -390,7 +402,11 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
         // 第一块内存是host内存，交换内存时不做处理
         for (size_t i = 0; i < m_num; ++i) {
             hccl::TransportMem::RmaMem localRmaMem = {hccl::RmaMemType::DEVICE, g_mem_c[i + 1], (uint64_t)g_len_c[i + 1]};
-            HCCLCHECK(transport_mem->RegMem(localRmaMem, rmaMemDescs[i]));
+            ret = transport_mem->RegMem(localRmaMem, rmaMemDescs[i]);
+            if (ret) {
+                LOG(ERROR) << "transport_mem->RegMem faield, ret:" << ret << " addr: " << g_mem_c[i + 1] << " len: " << (uint64_t)g_len_c[i + 1];
+                return -1;
+            }
         }
         hccl::TransportMem::RmaMemDescs localRmaMemDescs;
         localRmaMemDescs.array = rmaMemDescs.data();
@@ -400,10 +416,18 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
         hccl::TransportMem::RmaMemDescs remoteRmaMemDescs;
         remoteRmaMemDescs.array = remoteRmaMemDescArray.data();
         remoteRmaMemDescs.arrayLength = m_num;
-        HCCLCHECK(transport_mem->ExchangeMemDesc(localRmaMemDescs, remoteRmaMemDescs, actualNumOfRemote));
+        ret = transport_mem->ExchangeMemDesc(localRmaMemDescs, remoteRmaMemDescs, actualNumOfRemote);
+        if (ret) {
+            LOG(ERROR) << "transport_mem->ExchangeMemDesc faield, ret:" << ret;
+            return -1;
+        }
         std::vector<hccl::TransportMem::RmaMem> remoteRmaMemArray(m_num);
         for (uint32_t i = 0; i < m_num; ++i) {
-            HCCLCHECK(transport_mem->EnableMemAccess(remoteRmaMemDescArray[i], remoteRmaMemArray[i]));
+            ret = transport_mem->EnableMemAccess(remoteRmaMemDescArray[i], remoteRmaMemArray[i]);
+            if (ret) {
+                LOG(ERROR) << "transport_mem->EnableMemAccess faield, ret:" << ret << " i:" << i;
+                return -1;
+            }
         }
         // 交换和使能对端内存完成，可以进行读写
         LOG(INFO) << "ExchangeMem and EnableMemAccess Success!";
@@ -502,14 +526,26 @@ int transportMemAccept(RankInfo *local_rank_info) {
     if (!is_cross_hccs) {
         std::vector<unsigned int> remoteDevPhyId;
         remoteDevPhyId.push_back(remote_control_info.devicePhyId);
-        HCCLCHECK(hccl::P2PMgmtPub::EnableP2P(remoteDevPhyId));
-        HCCLCHECK(hccl::P2PMgmtPub::WaitP2PEnabled(remoteDevPhyId));
+        ret = hccl::P2PMgmtPub::EnableP2P(remoteDevPhyId);
+        if (ret) {
+            LOG(ERROR) << "P2PMgmtPub EnableP2P faield, ret:" << ret;
+            return -1;
+        }
+        ret = hccl::P2PMgmtPub::WaitP2PEnabled(remoteDevPhyId);
+        if (ret) {
+            LOG(ERROR) << "P2PMgmtPub EnableP2P faield, ret:" << ret;
+            return -1;
+        }
 
         rempoteDevIp = hccl::HcclIpAddress(remote_control_info.devicePhyId);
-        HCCLCHECK(hrtRaGetSingleSocketVnicIpInfo(local_rank_info->devicePhyId,
+        ret = hrtRaGetSingleSocketVnicIpInfo(local_rank_info->devicePhyId,
                                                 DeviceIdType::DEVICE_ID_TYPE_PHY_ID,
                                                 remote_control_info.devicePhyId,
-                                                rempoteDevIp));
+                                                rempoteDevIp);
+        if (ret) {
+            LOG(ERROR) << "P2PMgmtPub EnableP2P faield, ret:" << ret;
+            return -1;
+        }
 
         std::vector<SocketWlistInfo> wlistInfoVec;
         SocketWlistInfo wlistInfo = {};
@@ -633,7 +669,11 @@ int transportMemAccept(RankInfo *local_rank_info) {
     // 第一块内存是host内存，交换内存时不做处理
     for (size_t i = 0; i < m_num; ++i) {
         hccl::TransportMem::RmaMem localRmaMem = {hccl::RmaMemType::DEVICE, g_mem_c[i + 1], (uint64_t)g_len_c[i + 1]};
-        HCCLCHECK(transport_mem->RegMem(localRmaMem, rmaMemDescs[i]));
+        ret = transport_mem->RegMem(localRmaMem, rmaMemDescs[i]);
+        if (ret) {
+            LOG(ERROR) << "transport_mem->RegMem faield, ret:" << ret;
+            return -1;
+        }
     }
     hccl::TransportMem::RmaMemDescs localRmaMemDescs;
     localRmaMemDescs.array = rmaMemDescs.data();
@@ -643,10 +683,18 @@ int transportMemAccept(RankInfo *local_rank_info) {
     hccl::TransportMem::RmaMemDescs remoteRmaMemDescs;
     remoteRmaMemDescs.array = remoteRmaMemDescArray.data();
     remoteRmaMemDescs.arrayLength = m_num;
-    HCCLCHECK(transport_mem->ExchangeMemDesc(localRmaMemDescs, remoteRmaMemDescs, actualNumOfRemote));
+    ret = transport_mem->ExchangeMemDesc(localRmaMemDescs, remoteRmaMemDescs, actualNumOfRemote);
+    if (ret) {
+        LOG(ERROR) << "transport_mem->ExchangeMemDesc faield, ret:" << ret;
+        return -1;
+    }
     std::vector<hccl::TransportMem::RmaMem> remoteRmaMemArray(m_num);
     for (uint32_t i = 0; i < m_num; ++i) {
-        HCCLCHECK(transport_mem->EnableMemAccess(remoteRmaMemDescArray[i], remoteRmaMemArray[i]));
+        ret = transport_mem->EnableMemAccess(remoteRmaMemDescArray[i], remoteRmaMemArray[i]);
+        if (ret) {
+            LOG(ERROR) << "transport_mem->EnableMemAccess faield, ret:" << ret << " i:" << i;
+            return -1;
+        }
     }
 
     // 交换和使能对端内存完成，可以进行读写
