@@ -285,7 +285,7 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
                 LOG(ERROR) << "P2PMgmtPub EnableP2P faield, ret:" << ret;
                 return -1;
             }
-            rempoteDevIp = hccl::HcclIpAddress (remote_rank_info->devicePhyId);
+            rempoteDevIp = hccl::HcclIpAddress(remote_rank_info->devicePhyId);
             ret = hrtRaGetSingleSocketVnicIpInfo(local_rank_info->devicePhyId,
                                                 DeviceIdType::DEVICE_ID_TYPE_PHY_ID,
                                                 remote_rank_info->devicePhyId, rempoteDevIp);
@@ -297,7 +297,7 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
                     baseTag_, vnicNetDevCtx_, rempoteDevIp, remote_rank_info->devicePort,
                     hccl::HcclSocketRole::SOCKET_ROLE_CLIENT);
         } else {
-            rempoteDevIp = hccl::HcclIpAddress (remote_rank_info->deviceIp);
+            rempoteDevIp = hccl::HcclIpAddress(remote_rank_info->deviceIp);
             hccl_socket = 
                 std::make_shared<hccl::HcclSocket>(
                     baseTag_, nicNetDevCtx_, rempoteDevIp, remote_rank_info->devicePort,

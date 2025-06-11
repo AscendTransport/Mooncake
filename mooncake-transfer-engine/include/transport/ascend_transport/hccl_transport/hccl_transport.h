@@ -39,7 +39,7 @@
 
 #define THREAD_NUM 1
 #define ASCEND_DEFAULT_HOST_PORT  10000
-#define ASCEND_DEFAULT_DEVICE_PORT  16666
+#define ASCEND_DEFAULT_DEVICE_PORT 16666
 
 namespace mooncake {
 class TransferMetadata;

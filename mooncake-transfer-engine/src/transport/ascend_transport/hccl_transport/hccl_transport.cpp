@@ -49,8 +49,7 @@ void HcclTransport::initiatorLoop(int deviceLogicId, int selfIdx){
             LOG(ERROR) << "Unable to get target segment ID, please recheck";
             return;
         }
-        // the sender deviceLogicId is 0
-        local_rank_info_.deviceLogicId = 1;
+
         remote_rank_info_.rankId = segment_desc->rank_info.rankId;
         inet_pton(AF_INET, segment_desc->rank_info.hostIp.c_str(), &remote_rank_info_.hostIp);
         remote_rank_info_.hostPort = segment_desc->rank_info.hostPort;
@@ -148,6 +147,13 @@ int HcclTransport::getDevIdAndIpPortFromServerName(std::string& identifier, std:
 }
 
 int HcclTransport::findDeviceInfo(const cJSON* root, int devicePhyId) {
+    int deviceLogicId = 0;
+    int ret = aclrtGetDevice(&deviceLogicId);
+    if (ret != 0) {
+        LOG(ERROR) << "HcclTransport: aclrtGetDevice failed." << ret;
+        return -1;
+    }
+    LOG(INFO) << "deviceLogicId: "  << deviceLogicId << "devicePhyId: "  << devicePhyId;
     std::string devicePhyIdStr = std::to_string(devicePhyId);
     cJSON* serverList = cJSON_GetObjectItem(root, "server_list");
     if(!serverList || !cJSON_IsArray(serverList)) {
@@ -201,7 +207,7 @@ int HcclTransport::findDeviceInfo(const cJSON* root, int devicePhyId) {
                 local_rank_info_.serverIdx = 0;
                 local_rank_info_.devicePhyId = devicePhyId;
                 local_rank_info_.hostPort = ASCEND_DEFAULT_HOST_PORT + devicePhyId;
-                local_rank_info_.deviceLogicId = 0;
+                local_rank_info_.deviceLogicId = deviceLogicId;
                 local_rank_info_.devicePort = ASCEND_DEFAULT_DEVICE_PORT;
                 if (inet_pton(AF_INET, deviceIp->valuestring, &local_rank_info_.deviceIp) != 1) {
                     LOG(ERROR) << "HcclTransport: Invalid Device IP format: " << deviceIp->valuestring;
@@ -266,12 +272,12 @@ int HcclTransport::install(std::string &local_server_name,
     int devicePhyId;
     ret = getDevIdAndIpPortFromServerName(local_server_name, ip, port, devicePhyId);
     if (ret < 0){
-        LOG(ERROR) << "HcclTransport: getDevIdAndIpPortFromServerName failed, ret: " << ret <<", local_server_name" << local_server_name;
+        LOG(ERROR) << "HcclTransport: getDevIdAndIpPortFromServerName failed, ret: " << ret;
         return -1; 
     }
-    local_server_name_ = std::to_string(port);
+    local_server_name_ = ip + ":" + std::to_string(port);
 
-    LOG(INFO) << "HcclTransport: local devicePhyId: " << devicePhyId;
+    LOG(INFO) << "HcclTransport: local devicePhyId: " << devicePhyId  << ", local_server_name: " << local_server_name;
 
     // add to rankinfo_
     ret = rankTableParse(devicePhyId);
