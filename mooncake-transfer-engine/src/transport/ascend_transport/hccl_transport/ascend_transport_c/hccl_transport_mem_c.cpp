@@ -40,6 +40,8 @@ std::vector<uint64_t> g_len_c;
 int g_server_socket_ = 0;
 struct sockaddr_in g_server_addr_;
 
+int cnt = 0;
+
 static int initServerNetSocket(RankInfo *local_rank_info){
     //Init netdev
     int ret = HcclNetInit(NICDeployment::NIC_DEPLOYMENT_DEVICE, local_rank_info->devicePhyId, 
@@ -167,10 +169,10 @@ int initTransportMem(RankInfo *local_rank_info) {
               << ", hostIp: " << inet_ntoa(local_rank_info->hostIp)
               << ", hostPort: " << local_rank_info->hostPort;
 
-        // 初始化数据通道虚拟网卡和socket，交换RmaMem，以及创建QP链接
-        if (initServerNetSocket(local_rank_info) != 0) {
-            return -1;
-        }
+        // // 初始化数据通道虚拟网卡和socket，交换RmaMem，以及创建QP链接
+        // if (initServerNetSocket(local_rank_info) != 0) {
+        //     return -1;
+        // }
         
         if (initControlSocket(local_rank_info) != 0) {
             return -1;
@@ -231,6 +233,16 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
               << ", devicePort: " << remote_rank_info->devicePort
               << ", hostIp: " << inet_ntoa(remote_rank_info->hostIp)
               << ", hostPort: " << remote_rank_info->hostPort;
+    int ret;
+    if (cnt < 1) {
+        // 初始化数据通道虚拟网卡和socket，交换RmaMem，以及创建QP链接
+        ret = initServerNetSocket(local_rank_info);
+        if (ret) {
+            LOG(ERROR) << "initServerNetSocket failed;" << ret;
+            return -1;
+        }
+        cnt++;
+    }
 
     // 1、封装控制信息
     RankControlInfo control_info;
@@ -258,7 +270,7 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
     }
 
     // 3、查找对端，检查时候具备对应的transport_mem,并发送本端的信息给对端。
-    int ret = 0;
+    ret = 0;
     std::shared_ptr<hccl::TransportMem> transport_mem{};
     auto iter_mem = target_key_to_transport_mem_map_.find(key_str);
     // 根据hostIp和deviceId判断是否需要跨HCCS通信，跨HCCS使用真实网卡，内部使用虚拟网卡
@@ -514,6 +526,17 @@ int transportMemAccept(RankInfo *local_rank_info) {
               << remote_control_info.deviceLogicId
               << ", devicePhyId: " << remote_control_info.devicePhyId
               << ", hostIp: " << inet_ntoa(remote_control_info.hostIp);
+
+    if (cnt < 1) {
+        // 初始化数据通道虚拟网卡和socket，交换RmaMem，以及创建QP链接
+        ret = initServerNetSocket(local_rank_info);
+        if (ret) {
+            LOG(ERROR) << "initServerNetSocket failed;" << ret;
+            return -1;
+        }
+        cnt++;
+    }
+
     hccl::HcclIpAddress rempoteDevIp;
     std::shared_ptr<hccl::HcclSocket> hccl_socket;
     // 根据hostIp和deviceId判断是否需要跨HCCS通信，跨HCCS使用真实网卡，内部使用虚拟网卡
