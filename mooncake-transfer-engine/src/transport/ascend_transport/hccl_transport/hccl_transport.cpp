@@ -22,7 +22,6 @@ HcclTransport::~HcclTransport() {
 }
 
 void HcclTransport::initiatorLoop(int deviceLogicId, int selfIdx){
-
     aclrtStream stream;
     int ret = aclrtSetDevice(deviceLogicId);
     if (ret){
@@ -87,15 +86,14 @@ void HcclTransport::acceptLoop(int deviceLogicId){
 }
 
 int HcclTransport::initPdThread(){
-
     pid_t pid = getpid();
 
-    int ret;
+    int ret = 0;
     int deviceLogicId;
     ret = aclrtGetDevice(&deviceLogicId);
     if (ret) {
         LOG(ERROR) << "HcclTransport: aclrtGetDevice failed ret:" << ret;
-        return -1;
+        return ret;
     } 
 
     for (int i = 0; i < THREAD_NUM; ++i) {
@@ -134,6 +132,7 @@ int HcclTransport::getDevIdAndIpPortFromServerName(std::string& identifier, std:
     std::string npuStr = identifier.substr(secondColon + 1);
     if (npuStr.find("npu_") != 0) {
         LOG(ERROR) << "Invalid npu number format - should start with 'npu_'";
+        return -1;
     }
 
     try {
@@ -151,7 +150,7 @@ int HcclTransport::findDeviceInfo(const cJSON* root, int devicePhyId) {
     int ret = aclrtGetDevice(&deviceLogicId);
     if (ret != 0) {
         LOG(ERROR) << "HcclTransport: aclrtGetDevice failed." << ret;
-        return -1;
+        return ret;
     }
     LOG(INFO) << "deviceLogicId: "  << deviceLogicId << "devicePhyId: "  << devicePhyId;
     std::string devicePhyIdStr = std::to_string(devicePhyId);
@@ -223,11 +222,11 @@ int HcclTransport::findDeviceInfo(const cJSON* root, int devicePhyId) {
 
 // parse rank table json
 int HcclTransport::rankTableParse(int devicePhyId) {
-    int ret;
+    int ret = 0;
     const char* envRankTablePath = std::getenv("ENV_RANKTABLE_PATH");
     std::string filePath;
     if (!envRankTablePath) {
-        LOG(INFO) << "Environment variables ENV_RANKTABLE_PATH are not set. use Default Path";
+        LOG(INFO) << "Environment variables ENV_RANKTABLE_PATH are not set. use Default Path:/etc/hccl_16p.json";
         filePath = std::string("/etc/hccl_16p.json");
     } else {
         filePath = std::string(envRankTablePath);
@@ -256,7 +255,7 @@ int HcclTransport::rankTableParse(int devicePhyId) {
     ret = findDeviceInfo(root, devicePhyId);
     if (ret) {
         LOG(ERROR) << "HcclTransport: Failed to findDeviceInfo: " << ret;
-        return -1;
+        return ret;
     }
 
     cJSON_Delete(root);
@@ -265,50 +264,50 @@ int HcclTransport::rankTableParse(int devicePhyId) {
 
 int HcclTransport::install(std::string &local_server_name,
                           std::shared_ptr<TransferMetadata> meta, std::shared_ptr<Topology> topo) {
-    int ret;
-    metadata_ = meta;
+    int ret = 0;
     int port;
     std::string ip;
     int devicePhyId;
+    metadata_ = meta;
     ret = getDevIdAndIpPortFromServerName(local_server_name, ip, port, devicePhyId);
     if (ret < 0){
         LOG(ERROR) << "HcclTransport: getDevIdAndIpPortFromServerName failed, ret: " << ret;
-        return -1; 
+        return ret; 
     }
+    // 以ip:port作为desc_name
     local_server_name_ = ip + ":" + std::to_string(port);
-
     LOG(INFO) << "HcclTransport: local devicePhyId: " << devicePhyId  << ", local_server_name: " << local_server_name;
 
     // add to rankinfo_
     ret = rankTableParse(devicePhyId);
     if (ret) {
-        LOG(ERROR) << "HcclTransport: rankTableParse failed: " << ret;
-        return -1;
+        LOG(ERROR) << "HcclTransport: rankTableParse failed, ret: " << ret;
+        return ret;
     }
 
     ret = allocateLocalSegmentID();
     if (ret) {
-        LOG(ERROR) << "HcclTransport: cannot allocate local segment";
-        return -1;
+        LOG(ERROR) << "HcclTransport: cannot allocate local segment, ret: "<< ret;
+        return ret;
     }
 
     ret = metadata_->updateLocalSegmentDesc();
     if (ret) {
         LOG(ERROR) << "HcclTransport: cannot publish segments, "
-                      "check the availability of metadata storage";
-        return -1;
+                      "check the availability of metadata storage, ret: "<< ret;
+        return ret;
     }
 
     ret = initTransportMem(&local_rank_info_);
     if (ret) {
-        LOG(ERROR) << "HcclTransport: initTransportMem failed" << ret;
-        return -1;
+        LOG(ERROR) << "HcclTransport: initTransportMem failed, ret: "<< ret;
+        return ret;
     }
 
     ret = initPdThread();
     if (ret) {
-        LOG(ERROR) << "HcclTransport: initPdThread failed" << ret;
-        return -1;
+        LOG(ERROR) << "HcclTransport: initPdThread failed, ret: "<< ret;
+        return ret;
     }
 
     return 0;
@@ -418,14 +417,13 @@ int HcclTransport::registerLocalMemory(void *addr, size_t length,
     int ret;
     ret = regLocalRmaMem(addr, length);
     if(ret){
-        LOG(ERROR) << "HcclTransport: reglocalRmaMem failed";
+        LOG(ERROR) << "HcclTransport: reglocalRmaMem failed, ret:" << ret;
         return ret;
     }
 
     ret = metadata_->addLocalMemoryBuffer(buffer_desc, update_metadata);
-
     if(ret){
-        LOG(ERROR) << "HcclTransport: addLocalMemoryBuffer failed";
+        LOG(ERROR) << "HcclTransport: addLocalMemoryBuffer failed,ret: " << ret;
         return ret;
     }
 
@@ -441,13 +439,13 @@ int HcclTransport::allocateLocalSegmentID() {
     if (!desc) return ERR_MEMORY;
     desc->name = local_server_name_;
     desc->protocol = "ascend";
-    desc->rank_info.rankId = (uint64_t)local_rank_info_.rankId;
+    desc->rank_info.rankId = local_rank_info_.rankId;
     desc->rank_info.hostIp = inet_ntoa(local_rank_info_.hostIp);
-    desc->rank_info.hostPort = (uint64_t)local_rank_info_.hostPort;
-    desc->rank_info.deviceLogicId = (uint64_t)local_rank_info_.deviceLogicId;
-    desc->rank_info.devicePhyId = (uint64_t)local_rank_info_.devicePhyId;
+    desc->rank_info.hostPort = local_rank_info_.hostPort;
+    desc->rank_info.deviceLogicId = local_rank_info_.deviceLogicId;
+    desc->rank_info.devicePhyId = local_rank_info_.devicePhyId;
     desc->rank_info.deviceIp = inet_ntoa(local_rank_info_.deviceIp);
-    desc->rank_info.devicePort = (uint64_t)local_rank_info_.devicePort;
+    desc->rank_info.devicePort = local_rank_info_.devicePort;
 
     metadata_->addLocalSegment(LOCAL_SEGMENT_ID, local_server_name_,
                                std::move(desc));

@@ -15,7 +15,6 @@
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 #include <sys/time.h>
-
 #include <signal.h>
 #include <cmath>
 #include <cstdlib>
@@ -24,11 +23,9 @@
 #include <memory>
 #include <sstream>
 #include <unordered_map>
-
 #include "common/base/status.h"
 #include "transfer_engine.h"
 #include "transport/transport.h"
-
 #include "acl/acl.h"
 #include "hccl/hccl.h"
 
@@ -43,12 +40,9 @@ DEFINE_string(protocol, "hccl", "Transfer protocol: rdma|tcp|hccl");
 DEFINE_string(segment_id, "10.20.130.154:12346", "Segment ID to access data");
 DEFINE_int32(batch_size, 20, "Batch size");
 DEFINE_uint64(block_size, 32768, "Block size for each transfer request");
-DEFINE_uint64(block_iteration, 8, "number of iterations of the block");
+DEFINE_uint64(block_iteration, 10, "number of iterations of the block");
 DEFINE_bool(auto_discovery, false, "Enable auto discovery");
 DEFINE_uint64(device_id, 0, "The device ID of this machine");
-DEFINE_string(segment_id_1, "NA", "A segment ID that a sender wants to another receiver");
-DEFINE_uint64(recv_num, 1, "Num of coonections received by the receiver");
-DEFINE_uint64(send_index, 0, "which one is sent to the same receiver");
 DEFINE_string(report_unit, "GB", "Report unit: GB|GiB|Gb|MB|MiB|Mb|KB|KiB|Kb");
 DEFINE_uint32(report_precision, 2, "Report precision");
 
@@ -83,40 +77,43 @@ static inline std::string calculateRate(uint64_t data_bytes, uint64_t duration) 
     return oss.str();
 }
 
-int device_malloc(void* &dev_addr, size_t size){
-    // create acl
-    aclError ret = aclrtMalloc(&dev_addr, size, ACL_MEM_MALLOC_NORMAL_ONLY);
+int allocateDevMem(void* &devAddr, size_t size){
+    // malloc device mem
+    aclError ret = aclrtMalloc(&devAddr, size, ACL_MEM_MALLOC_NORMAL_ONLY);
     if (ret != ACL_ERROR_NONE) {
-        printf("Failed to allocate host memory, ret:%d\n", ret);
-        return -1;
+        LOG(ERROR) << "Failed to allocate device memory, ret:" << ret;
+        return ret;
     }
 
-    // malloc mem
+    // malloc host mem
     void* host_addr = nullptr;
     ret = aclrtMallocHost(&host_addr, size);
-    if (ret != ACL_ERROR_NONE || host_addr == NULL) {
-        printf("Failed to allocate host memory, ret:%d\n", ret);
-        aclrtFree(dev_addr);
-        return -1;
+    if (ret != ACL_ERROR_NONE || host_addr == nullptr) {
+        LOG(ERROR) << "Failed to allocate device memory, ret:" << ret;
+        return ret;
     }
 
-    // reg host mem
+    // memset
     for (size_t i = 0; i < size; i += sizeof(uint32_t)) {
         *(uint32_t*)((char *)host_addr + i) = 0x12345678;
     }
 
     // copy data from host mem to device mem
-    ret = aclrtMemcpy(dev_addr, size, host_addr, size, ACL_MEMCPY_HOST_TO_DEVICE);
+    ret = aclrtMemcpy(devAddr, size, host_addr, size, ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != ACL_ERROR_NONE) {
-        printf("Failed to copy data from host to device, ret:%d\n", ret);
+        LOG(ERROR) << "Failed to copy data from host to device, ret: " << ret;
         aclrtFreeHost(host_addr);
-        aclrtFree(dev_addr);
-        return -1;
+        aclrtFree(devAddr);
+        return ret;
     }
     
     //release resource
-    aclrtFreeHost(host_addr);
-
+    ret = aclrtFreeHost(host_addr);
+    if (ret != ACL_ERROR_NONE) {
+        LOG(ERROR) << "Failed to aclrtFreeHost, ret: " << ret;
+        return ret;
+    }
+    
     return 0;
 }
 
@@ -124,9 +121,8 @@ int initiator() {
     aclrtContext context = NULL;
     aclError ret = aclrtCreateContext(&context, g_deviceId);
     if (ret != ACL_ERROR_NONE) {
-        printf("Failed to create context, ret:%d\n", ret);
-        aclFinalize();
-        return -1;
+        LOG(ERROR) << "Failed to create context, ret: " << ret;
+        return ret;
     }
 
     // disable topology auto discovery for testing.
@@ -140,25 +136,47 @@ int initiator() {
     // 注册一块host内存，和vllm-connector场景保持一致Add commentMore actions
     void* host_addr = nullptr;
     ret = aclrtMallocHost(&host_addr, HOST_BUFFER_SIZE);
-    if (ret != ACL_ERROR_NONE || host_addr == NULL) {
-        printf("Failed to allocate host memory, ret:%d\n", ret);
-        return -1;
+    if (ret != ACL_ERROR_NONE || host_addr == nullptr) {
+        LOG(ERROR) << "Failed to allocate host memory, ret: " << ret;
+        return ret;
     }
 
     ret = engine->registerLocalMemory(host_addr, HOST_BUFFER_SIZE, "cpu");
-    void *dev_addr = NULL;
+    if (ret) {
+        LOG(ERROR) << "Failed to registerLocalMemory, ret: " << ret;
+        return ret;
+    }
+
+    // 预热发送 
+    void *tmp_devAddr = NULL;
+    ret = allocateDevMem(tmp_devAddr, FLAGS_block_size);
+    if (ret) {
+        LOG(ERROR) << "Failed to allocateDevMem, ret: " << ret;
+        return ret;
+    }
+
+    LOG(INFO) << "tmp_devAddr_target: " << tmp_devAddr << ", len: " << FLAGS_block_size;
+    ret = engine->registerLocalMemory(tmp_devAddr, FLAGS_block_size,
+                                        "npu:" + std::to_string(g_deviceId));
+
+    void *devAddr = NULL;
     std::vector<void *> g_addr;
-    for (uint32_t i = 0; i < FLAGS_block_iteration + 1; i++ ) {
+    for (uint32_t i = 0; i < FLAGS_block_iteration; i++ ) {
         uint64_t block_size = FLAGS_block_size * (1 << i);
-        ret = device_malloc(dev_addr, FLAGS_batch_size * block_size);
-        if (ret != 0) {
+        ret = allocateDevMem(devAddr, FLAGS_batch_size * block_size);
+        if (ret) {
+            LOG(ERROR) << "Failed to allocateDevMem, ret: " << ret;
             return -1;
         }
-        LOG(INFO) << "dev_addr_initor: " << dev_addr << " len:" << FLAGS_batch_size * block_size;
-        int rc = engine->registerLocalMemory(dev_addr, FLAGS_batch_size * block_size,
+        LOG(INFO) << "dev_addr_initor: " << devAddr << " len:" << FLAGS_batch_size * block_size;
+        ret = engine->registerLocalMemory(devAddr, FLAGS_batch_size * block_size,
                                             "npu:" + std::to_string(g_deviceId));
-        LOG_ASSERT(!rc);
-        g_addr.push_back(dev_addr);
+        if (ret) {
+            LOG(ERROR) << "Failed to registerLocalMemory, ret: " << ret;
+            return ret;
+        }
+
+        g_addr.push_back(devAddr);
     }
 
     auto segment_id = engine->openSegment(FLAGS_segment_id.c_str());
@@ -170,22 +188,53 @@ int initiator() {
         opcode = TransferRequest::WRITE;
     else {
         LOG(ERROR) << "Unsupported operation: must be 'read' or 'write'";
-        exit(EXIT_FAILURE);
+        return -1;
     }
 
     auto segment_desc = engine->getMetadata()->getSegmentDescByID(segment_id);
     if (!segment_desc) {
         LOG(ERROR) << "Unable to get target segment ID, please recheck";
-        exit(EXIT_FAILURE);
+        return -1;
     }
 
     Status s;
     uint64_t remote_base = 0;
-    for (uint32_t i = 0; i < FLAGS_block_iteration + 1; i++) {
+    remote_base = (uint64_t)segment_desc->buffers[1].addr;
+    auto tmp_batch_id = engine->allocateBatchID(1);
+    std::vector<TransferRequest> tmp_requests;
+    TransferRequest entry;
+    entry.opcode = opcode;
+    entry.length = block_size;
+    entry.source = (uint8_t *)tmp_devAddr;
+    entry.target_id = segment_id;
+    entry.target_offset = remote_base; 
+    tmp_requests.emplace_back(entry);
+
+    ret = engine->submitTransfer(tmp_batch_id, tmp_requests);
+    if (ret) {
+        LOG(ERROR) << "Failed to submitTransfer, ret: " << ret;
+        return ret;
+    }
+
+    bool completed = false;
+    TransferStatus status;
+    while (!completed) {
+        s = engine->getTransferStatus(tmp_batch_id, 0, status);
+        LOG_ASSERT(s.ok());
+        if (status.s == TransferStatusEnum::COMPLETED)
+            completed = true;
+        else if (status.s == TransferStatusEnum::FAILED) {
+            LOG(INFO) << "FAILED";
+            completed = true;
+            return -1;
+        }
+    }
+
+    for (uint32_t i = 0; i < FLAGS_block_iteration; i++) {
         uint64_t block_size = FLAGS_block_size * (1 << i);
         struct timeval start_tv, stop_tv;
         gettimeofday(&start_tv, nullptr);
-        remote_base = (uint64_t)segment_desc->buffers[i + 1].addr;
+        remote_base = (uint64_t)segment_desc->buffers[i + 2].addr;
         auto batch_id = engine->allocateBatchID(FLAGS_batch_size);
         std::vector<TransferRequest> requests;
         for (int j = 0; j < FLAGS_batch_size; ++j) {
@@ -197,20 +246,22 @@ int initiator() {
             entry.target_offset = remote_base + block_size * j; 
             requests.emplace_back(entry);
         }
-        s = engine->submitTransfer(batch_id, requests);
-        LOG_ASSERT(s.ok());
+        ret = engine->submitTransfer(batch_id, requests);
+        if (ret) {
+            LOG(ERROR) << "Failed to submitTransfer, ret: " << ret;
+            return ret;
+        }
         for (int task_id = 0; task_id < FLAGS_batch_size; ++task_id) {
-            bool completed = false;
-            TransferStatus status;
+            completed = false;
             while (!completed) {
-                Status s = engine->getTransferStatus(batch_id, task_id, status);
+                s = engine->getTransferStatus(batch_id, task_id, status);
                 LOG_ASSERT(s.ok());
                 if (status.s == TransferStatusEnum::COMPLETED)
                     completed = true;
                 else if (status.s == TransferStatusEnum::FAILED) {
                     LOG(INFO) << "FAILED";
                     completed = true;
-                    exit(EXIT_FAILURE);
+                    return -1;
                 }
             }
         }
@@ -228,9 +279,9 @@ int initiator() {
         LOG_ASSERT(s.ok());
     }
 
-    //release resource
+    // release resource
     aclrtFreeHost(host_addr);
-    for (uint32_t i = 0; i < FLAGS_block_iteration + 1; i++) {
+    for (uint32_t i = 0; i < FLAGS_block_iteration; i++) {
         aclrtFree(g_addr[i]);
     }
     return 0;
@@ -239,11 +290,10 @@ int initiator() {
 volatile bool target_running = true;
 
 int target() {
-    aclrtContext context = NULL;
+    aclrtContext context = nullptr;
     aclError ret = aclrtCreateContext(&context, g_deviceId);
     if (ret != ACL_ERROR_NONE) {
-        printf("Failed to create context\n");
-        aclFinalize();
+        LOG(ERROR) <<"Failed to create context, ret: " << ret;
         return -1;
     }
 
@@ -258,33 +308,56 @@ int target() {
     // 注册一块host内存，和vllm-connector场景保持一致Add commentMore actions
     void* host_addr = nullptr;
     ret = aclrtMallocHost(&host_addr, HOST_BUFFER_SIZE);
-    if (ret != ACL_ERROR_NONE || host_addr == NULL) {
-        printf("Failed to allocate host memory, ret:%d\n", ret);
+    if (ret != ACL_ERROR_NONE || host_addr == nullptr) {
+        LOG(ERROR) <<"Failed to allocate host memory, ret: " << ret;
         return -1;
     }
 
     ret = engine->registerLocalMemory(host_addr, HOST_BUFFER_SIZE, "cpu");
+    if (ret) {
+        LOG(ERROR) << "Failed to registerLocalMemory, ret: " << ret;
+        return ret;
+    }
+    
+    // 预热发送 
+    void *tmp_devAddr = NULL;
+    ret = allocateDevMem(tmp_devAddr, FLAGS_block_size);
+    if (ret) {
+        LOG(ERROR) << "Failed to allocateDevMem, ret: " << ret;
+        return ret;
+    }
 
-    void *dev_addr = NULL;
+    LOG(INFO) << "tmp_devAddr_target: " << tmp_devAddr << ", len: " << FLAGS_block_size;
+    ret = engine->registerLocalMemory(tmp_devAddr, FLAGS_block_size,
+                                        "npu:" + std::to_string(g_deviceId));
+
+    void *devAddr = NULL;
     std::vector<void *> g_addr;
-    for (uint32_t i = 0; i < FLAGS_block_iteration + 1; i++) {
+    for (uint32_t i = 0; i < FLAGS_block_iteration; i++) {
         uint64_t block_size = FLAGS_block_size * (1 << i);
-        ret = device_malloc(dev_addr, FLAGS_batch_size * block_size);
-        if (ret != 0) {
-            return -1;
+        ret = allocateDevMem(devAddr, FLAGS_batch_size * block_size);
+        if (ret) {
+            LOG(ERROR) << "Failed to allocateDevMem, ret: " << ret;
+            return ret;
         }
-        LOG(INFO) << "dev_addr_initor: " << dev_addr << ", len: " << FLAGS_batch_size * block_size;
-        int rc = engine->registerLocalMemory(dev_addr, FLAGS_batch_size * block_size,
+
+        LOG(INFO) << "devAddr_target: " << devAddr << ", len: " << FLAGS_batch_size * block_size;
+        ret = engine->registerLocalMemory(devAddr, FLAGS_batch_size * block_size,
                                             "npu:" + std::to_string(g_deviceId));
-        LOG_ASSERT(!rc);
-        g_addr.push_back(dev_addr);
+        if (ret) {
+            LOG(ERROR) << "Failed to registerLocalMemory, ret: " << ret;
+            return ret;
+        }
+
+        g_addr.push_back(devAddr);
     }
 
     while (target_running) sleep(1);
 
     //release resource
     aclrtFreeHost(host_addr);
-    for (uint32_t i = 0; i < FLAGS_block_iteration + 1; i++) {
+    aclrtFree(tmp_devAddr);
+    for (uint32_t i = 0; i < FLAGS_block_iteration; i++) {
         aclrtFree(g_addr[i]);
     }
     

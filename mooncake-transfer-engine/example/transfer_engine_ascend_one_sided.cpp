@@ -15,7 +15,6 @@
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 #include <sys/time.h>
-
 #include <signal.h>
 #include <cmath>
 #include <cstdlib>
@@ -24,11 +23,9 @@
 #include <memory>
 #include <sstream>
 #include <unordered_map>
-
 #include "common/base/status.h"
 #include "transfer_engine.h"
 #include "transport/transport.h"
-
 #include "acl/acl.h"
 #include "hccl/hccl.h"
 
@@ -83,87 +80,107 @@ static inline std::string calculateRate(uint64_t data_bytes, uint64_t duration) 
     return oss.str();
 }
 
-int device_malloc(void* &dev_addr, size_t size){
-    // create acl
-    aclError ret = aclrtMalloc(&dev_addr, size, ACL_MEM_MALLOC_NORMAL_ONLY);
+int allocateDevMem(void* &devAddr, size_t size){
+    // malloc device mem
+    aclError ret = aclrtMalloc(&devAddr, size, ACL_MEM_MALLOC_NORMAL_ONLY);
     if (ret != ACL_ERROR_NONE) {
-        printf("Failed to allocate host memory, ret:%d\n", ret);
-        return -1;
+        LOG(ERROR) << "Failed to allocate device memory, ret:" << ret;
+        return ret;
     }
 
-    // malloc mem
+    // malloc host mem
     void* host_addr = nullptr;
     ret = aclrtMallocHost(&host_addr, size);
-    if (ret != ACL_ERROR_NONE || host_addr == NULL) {
-        printf("Failed to allocate host memory, ret:%d\n", ret);
-        aclrtFree(dev_addr);
-        return -1;
+    if (ret != ACL_ERROR_NONE || host_addr == nullptr) {
+        LOG(ERROR) << "Failed to allocate device memory, ret:" << ret;
+        return ret;
     }
 
-    // reg host mem
+    // memset
     for (size_t i = 0; i < size; i += sizeof(uint32_t)) {
         *(uint32_t*)((char *)host_addr + i) = 0x12345678;
     }
 
     // copy data from host mem to device mem
-    ret = aclrtMemcpy(dev_addr, size, host_addr, size, ACL_MEMCPY_HOST_TO_DEVICE);
+    ret = aclrtMemcpy(devAddr, size, host_addr, size, ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != ACL_ERROR_NONE) {
-        printf("Failed to copy data from host to device, ret:%d\n", ret);
+        LOG(ERROR) << "Failed to copy data from host to device, ret: " << ret;
         aclrtFreeHost(host_addr);
-        aclrtFree(dev_addr);
-        return -1;
+        aclrtFree(devAddr);
+        return ret;
     }
     
     //release resource
-    aclrtFreeHost(host_addr);
-
+    ret = aclrtFreeHost(host_addr);
+    if (ret != ACL_ERROR_NONE) {
+        LOG(ERROR) << "Failed to aclrtFreeHost, ret: " << ret;
+        return ret;
+    }
+    
     return 0;
 }
 
 int initiator() {
-    aclrtContext context = NULL;
+    aclrtContext context = nullptr;
     aclError ret = aclrtCreateContext(&context, g_deviceId);
     if (ret != ACL_ERROR_NONE) {
-        printf("Failed to create context, ret:%d\n", ret);
-        aclFinalize();
-        return -1;
+        LOG(ERROR) << "Failed to create context, ret: " << ret;
+        return ret;
     }
 
     // disable topology auto discovery for testing.
     auto engine = std::make_unique<TransferEngine>(FLAGS_auto_discovery);
 
     auto hostname_port = parseHostNameWithPort(FLAGS_local_server_name);
-    std::string FLAGS_local_server_name_new = hostname_port.first + ":" + std::to_string(hostname_port.second) + ":npu_" + std::to_string(g_deviceId);
-    engine->init(FLAGS_metadata_server, FLAGS_local_server_name_new.c_str(),
+    std::string FLAGS_local_server_name_npu = hostname_port.first + ":" + std::to_string(hostname_port.second) + ":npu_" + std::to_string(g_deviceId);
+    engine->init(FLAGS_metadata_server, FLAGS_local_server_name_npu.c_str(),
                  hostname_port.first.c_str(), hostname_port.second);
     
-    // 注册一块host内存，和vllm-connector场景保持一致Add commentMore actions
+    // 最开始注册一块host内存，和vllm-connecto v1r场景保持一致
     void* host_addr = nullptr;
     ret = aclrtMallocHost(&host_addr, HOST_BUFFER_SIZE);
-    if (ret != ACL_ERROR_NONE || host_addr == NULL) {
-        printf("Failed to allocate host memory, ret:%d\n", ret);
-        return -1;
+    if (ret != ACL_ERROR_NONE || host_addr == nullptr) {
+        LOG(ERROR) << "Failed to allocate host memory, ret: " << ret;
+        return ret;
     }
 
     ret = engine->registerLocalMemory(host_addr, HOST_BUFFER_SIZE, "cpu");
+    if (ret) {
+        LOG(ERROR) << "Failed to registerLocalMemory, ret: " << ret;
+        return ret;
+    }
 
-    void *dev_addr = NULL;
-    device_malloc(dev_addr, FLAGS_block_size * FLAGS_batch_size);
+    void *devAddr = nullptr;
+    ret = allocateDevMem(devAddr, FLAGS_block_size * FLAGS_batch_size);
+    if (ret) {
+        LOG(ERROR) << "Failed to allocateDevMem, ret: " << ret;
+        return ret;
+    }
 
-    LOG(INFO) << "dev_addr_initor: " << dev_addr;
+    LOG(INFO) << "devAddr_initator: " << devAddr;
 
-    int rc = engine->registerLocalMemory(dev_addr, g_TotalSize,
+    ret = engine->registerLocalMemory(devAddr, g_TotalSize,
                                         "npu:" + std::to_string(g_deviceId));
-    LOG_ASSERT(!rc);
+    if (ret) {
+        LOG(ERROR) << "Failed to registerLocalMemory, ret: " << ret;
+        return ret;
+    }
 
-    void *dev_addr2 = NULL;
-    device_malloc(dev_addr2, FLAGS_block_size * FLAGS_batch_size);
+    void *devAddr2 = nullptr;
+    ret = allocateDevMem(devAddr2, FLAGS_block_size * FLAGS_batch_size);
+    if (ret) {
+        LOG(ERROR) << "Failed to allocateDevMem, ret: " << ret;
+        return ret;
+    }
 
-    LOG(INFO) << "dev2_addr_initor: " << dev_addr2;
+    LOG(INFO) << "devAddr_initator2: " << devAddr2;
 
-    rc = engine->registerLocalMemory(dev_addr2, g_TotalSize,
+    ret = engine->registerLocalMemory(devAddr2, g_TotalSize,
                                         "npu:" + std::to_string(g_deviceId));
-    LOG_ASSERT(!rc);
+    if (ret) {
+        LOG(ERROR) << "Failed to registerLocalMemory, ret: " << ret;
+        return ret;
+    }
 
     auto segment_id = engine->openSegment(FLAGS_segment_id.c_str());
 
@@ -177,13 +194,13 @@ int initiator() {
         opcode = TransferRequest::WRITE;
     else {
         LOG(ERROR) << "Unsupported operation: must be 'read' or 'write'";
-        exit(EXIT_FAILURE);
+        return -1;
     }
 
     auto segment_desc = engine->getMetadata()->getSegmentDescByID(segment_id);
     if (!segment_desc) {
         LOG(ERROR) << "Unable to get target segment ID, please recheck";
-        exit(EXIT_FAILURE);
+        return -1;
     }
     uint64_t remote_base =
         (uint64_t)segment_desc->buffers[1].addr;   
@@ -195,14 +212,17 @@ int initiator() {
         TransferRequest entry;
         entry.opcode = opcode;
         entry.length = FLAGS_block_size;
-        entry.source = (uint8_t *)(dev_addr) + FLAGS_block_size * i;
+        entry.source = (uint8_t *)(devAddr) + FLAGS_block_size * i;
         entry.target_id = segment_id;
         entry.target_offset = remote_base + FLAGS_block_size * i + g_TotalSize * FLAGS_send_index; 
         requests.emplace_back(entry);
     }
 
-    s = engine->submitTransfer(batch_id, requests);
-    LOG_ASSERT(s.ok());
+    ret = engine->submitTransfer(batch_id, requests);
+    if (ret) {
+        LOG(ERROR) << "Failed to submitTransfer, ret: " << ret;
+        return ret;
+    }
     for (int task_id = 0; task_id < FLAGS_batch_size; ++task_id) {
         bool completed = false;
         TransferStatus status;
@@ -212,13 +232,13 @@ int initiator() {
             if (status.s == TransferStatusEnum::COMPLETED)
                 completed = true;
             else if (status.s == TransferStatusEnum::FAILED) {
-                LOG(INFO) << "FAILED";
+                LOG(ERROR) << "getTransferStatus FAILED";
                 completed = true;
-                exit(EXIT_FAILURE);
+                return -1;
             }
         }
     }
-    LOG(INFO) << "Send OK";
+    LOG(INFO) << "The First Time Send OK";
 
     uint64_t remote_base2 =
         (uint64_t)segment_desc->buffers[2].addr;   
@@ -229,14 +249,17 @@ int initiator() {
         TransferRequest entry;
         entry.opcode = opcode;
         entry.length = FLAGS_block_size;
-        entry.source = (uint8_t *)(dev_addr2) + FLAGS_block_size * i;
+        entry.source = (uint8_t *)(devAddr2) + FLAGS_block_size * i;
         entry.target_id = segment_id;
         entry.target_offset = remote_base2 + FLAGS_block_size * i + g_TotalSize * FLAGS_send_index; 
         requests2.emplace_back(entry);
     }
 
-    s = engine->submitTransfer(batch_id_2, requests2);
-    LOG_ASSERT(s.ok());
+    ret = engine->submitTransfer(batch_id_2, requests2);
+    if (ret) {
+        LOG(ERROR) << "Failed to submitTransfer, ret: " << ret;
+        return ret;
+    }
     for (int task_id = 0; task_id < FLAGS_batch_size; ++task_id) {
         bool completed = false;
         TransferStatus status;
@@ -246,13 +269,13 @@ int initiator() {
             if (status.s == TransferStatusEnum::COMPLETED)
                 completed = true;
             else if (status.s == TransferStatusEnum::FAILED) {
-                LOG(INFO) << "FAILED";
+                LOG(ERROR) << "getTransferStatus FAILED";
                 completed = true;
-                exit(EXIT_FAILURE);
+                return -1;
             }
         }
     }
-    LOG(INFO) << "Send2 OK";
+    LOG(INFO) << "The Second Time Send OK";
 
     gettimeofday(&stop_tv, nullptr);
     uint64_t duration = (stop_tv.tv_sec - start_tv.tv_sec) * 1000000.0 +
@@ -276,13 +299,13 @@ int initiator() {
             opcode = TransferRequest::WRITE;
         else {
             LOG(ERROR) << "Unsupported operation: must be 'read' or 'write'";
-            exit(EXIT_FAILURE);
+            return -1;
         }
 
         auto segment_desc_1 = engine->getMetadata()->getSegmentDescByID(segment_id_1);
         if (!segment_desc_1) {
             LOG(ERROR) << "Unable to get target segment ID, please recheck";
-            exit(EXIT_FAILURE);
+            return -1;
         }
         uint64_t remote_base_1 =
             (uint64_t)segment_desc_1->buffers[1].addr;   
@@ -293,14 +316,17 @@ int initiator() {
             TransferRequest entry;
             entry.opcode = opcode;
             entry.length = FLAGS_block_size;
-            entry.source = (uint8_t *)(dev_addr) + FLAGS_block_size * i;
+            entry.source = (uint8_t *)(devAddr) + FLAGS_block_size * i;
             entry.target_id = segment_id_1;
             entry.target_offset = remote_base_1 + FLAGS_block_size * i + g_TotalSize * FLAGS_send_index;
             requests.emplace_back(entry);
         }
 
-        s = engine->submitTransfer(batch_id, requests);
-        LOG_ASSERT(s.ok());
+        ret = engine->submitTransfer(batch_id, requests);
+        if (ret) {
+            LOG(ERROR) << "Failed to submitTransfer, ret: " << ret;
+            return ret;
+        }
         for (int task_id = 0; task_id < FLAGS_batch_size; ++task_id) {
             bool completed = false;
             TransferStatus status;
@@ -310,22 +336,22 @@ int initiator() {
                 if (status.s == TransferStatusEnum::COMPLETED)
                     completed = true;
                 else if (status.s == TransferStatusEnum::FAILED) {
-                    LOG(INFO) << "FAILED";
+                    LOG(ERROR) << "getTransferStatus FAILED";
                     completed = true;
-                    exit(EXIT_FAILURE);
+                    return -1;
                 }
             }
         }
 
-        LOG(INFO) << "Send OK 2rd";
+        LOG(INFO) << "Send OK 2rd device";
         s = engine->freeBatchID(batch_id);
         LOG_ASSERT(s.ok());
     }
 
     //release resource
     aclrtFreeHost(host_addr);
-    aclrtFree(dev_addr);
-    aclrtFree(dev_addr2);
+    aclrtFree(devAddr);
+    aclrtFree(devAddr2);
 
     return 0;
 }
@@ -333,11 +359,10 @@ int initiator() {
 volatile bool target_running = true;
 
 int target() {
-    aclrtContext context = NULL;
+    aclrtContext context = nullptr;
     aclError ret = aclrtCreateContext(&context, g_deviceId);
     if (ret != ACL_ERROR_NONE) {
-        printf("Failed to create context\n");
-        aclFinalize();
+        LOG(ERROR) <<"Failed to create context, ret: " << ret;
         return -1;
     }
 
@@ -345,45 +370,58 @@ int target() {
     auto engine = std::make_unique<TransferEngine>(FLAGS_auto_discovery);
 
     auto hostname_port = parseHostNameWithPort(FLAGS_local_server_name);
-    std::string FLAGS_local_server_name_new = hostname_port.first + ":" + std::to_string(hostname_port.second) + ":npu_" + std::to_string(g_deviceId);
-    engine->init(FLAGS_metadata_server, FLAGS_local_server_name_new.c_str(),
+    std::string FLAGS_local_server_name_npu = hostname_port.first + ":" + std::to_string(hostname_port.second) + ":npu_" + std::to_string(g_deviceId);
+    engine->init(FLAGS_metadata_server, FLAGS_local_server_name_npu.c_str(),
                  hostname_port.first.c_str(), hostname_port.second);
     
     // 注册一块host内存，和vllm-connector场景保持一致Add commentMore actions
     void* host_addr = nullptr;
     ret = aclrtMallocHost(&host_addr, HOST_BUFFER_SIZE);
-    if (ret != ACL_ERROR_NONE || host_addr == NULL) {
-        printf("Failed to allocate host memory, ret:%d\n", ret);
+    if (ret != ACL_ERROR_NONE || host_addr == nullptr) {
+        LOG(ERROR) <<"Failed to allocate host memory, ret: " << ret;
         return -1;
     }
 
-    ret = engine->registerLocalMemory(host_addr, HOST_BUFFER_SIZE,
-                                        "cpu");
+    ret = engine->registerLocalMemory(host_addr, HOST_BUFFER_SIZE, "cpu");
+    if (ret) {
+        LOG(ERROR) << "Failed to registerLocalMemory, ret: " << ret;
+        return ret;
+    }
 
-    void *dev_addr = NULL;
-    device_malloc(dev_addr, FLAGS_block_size * FLAGS_batch_size);
+    void *devAddr = nullptr;
+    ret = allocateDevMem(devAddr, FLAGS_block_size * FLAGS_batch_size);
+    if (ret) {
+        LOG(ERROR) << "Failed to allocateDevMem, ret: " << ret;
+        return ret;
+    }
 
-    LOG(INFO) << "dev_addr_target: " << dev_addr;
+    LOG(INFO) << "devAddr_target: " << devAddr;
 
-    int rc = engine->registerLocalMemory(dev_addr, g_TotalSize * FLAGS_recv_num,
+    ret = engine->registerLocalMemory(devAddr, g_TotalSize * FLAGS_recv_num,
                                         "npu:" + std::to_string(g_deviceId));
-    LOG_ASSERT(!rc);
+    if (ret) {
+        LOG(ERROR) << "Failed to registerLocalMemory, ret: " << ret;
+        return ret;
+    }
 
-    void *dev_addr2 = NULL;
-    device_malloc(dev_addr2, FLAGS_block_size * FLAGS_batch_size);
+    void *devAddr2 = nullptr;
+    allocateDevMem(devAddr2, FLAGS_block_size * FLAGS_batch_size);
 
-    LOG(INFO) << "dev_addr2_target: " << dev_addr2;
+    LOG(INFO) << "devAddr_target_2: " << devAddr2;
 
-    rc = engine->registerLocalMemory(dev_addr2, g_TotalSize * FLAGS_recv_num,
+    ret = engine->registerLocalMemory(devAddr2, g_TotalSize * FLAGS_recv_num,
                                         "npu:" + std::to_string(g_deviceId));
-    LOG_ASSERT(!rc);
+    if (ret) {
+        LOG(ERROR) << "Failed to registerLocalMemory, ret: " << ret;
+        return ret;
+    }
 
     while (target_running) sleep(1);
 
     //release resource
     aclrtFreeHost(host_addr);
-    aclrtFree(dev_addr);
-    aclrtFree(dev_addr2);
+    aclrtFree(devAddr);
+    aclrtFree(devAddr2);
     
     return 0;
 }
@@ -394,16 +432,16 @@ int main(int argc, char **argv) {
 
     g_deviceId = FLAGS_device_id;
     //init ACL 
-    const char *aclConfigPath = NULL;
+    const char *aclConfigPath = nullptr;
     aclError ret = aclInit(aclConfigPath);
     if (ret != ACL_ERROR_NONE) {
-        printf("Failed to initialize ACL\n");
+        LOG(ERROR) << "Failed to initialize ACL, ret: " << ret;
         return -1;
     }
 
     ret = aclrtSetDevice(g_deviceId);
     if (ret != ACL_ERROR_NONE) {
-        printf("Failed to set device ACL\n");
+        LOG(ERROR) << "Failed to set device, ret: " << ret;
         return -1;
     }
 

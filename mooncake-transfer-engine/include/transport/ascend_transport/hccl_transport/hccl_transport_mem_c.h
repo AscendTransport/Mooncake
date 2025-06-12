@@ -1,10 +1,12 @@
+// Copyright 2024 KVCache.AI
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
 #ifndef HCCL_TRANSPORT_MEM_H
 #define HCCL_TRANSPORT_MEM_H
 
 #include <condition_variable>
 #include <glog/logging.h>
 #include <functional>
-
 #include "acl/acl.h"
 #include "adapter_hccp_common.h"
 #include "dispatcher.h"
@@ -23,12 +25,8 @@
 #include "notify_pool.h"
 #include "p2p_mgmt_pub.h"
 #include "sal_pub.h"
-
 #include "transport_mem.h"
 #include "transport_pub.h"
-
-
-
 
 #ifdef __cplusplus
 extern "C" {

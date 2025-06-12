@@ -64,7 +64,7 @@ class TransferMetadata {
         uint64_t hostPort;
         uint64_t deviceLogicId;
         uint64_t devicePhyId;
-        uint64_t deviceType = 5;
+        uint64_t deviceType = 5; // default
         std::string deviceIp;
         uint64_t devicePort;
     };
