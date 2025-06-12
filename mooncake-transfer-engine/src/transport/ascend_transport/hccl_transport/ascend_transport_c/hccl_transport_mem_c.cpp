@@ -213,7 +213,11 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
                     int op_code, uint64_t offset,
                     uint64_t req_len, void *local_mem, aclrtStream stream)
 {
-    LOG(INFO) << "transportMemTask local_rank_info rankId: "
+    // 2、查找对端，检查是否具备对应的socket，并发送本端的信息给对端
+    std::string key_str = inet_ntoa(remote_rank_info->hostIp) + std::to_string(remote_rank_info->devicePhyId);
+    auto iter = target_key_to_control_socket_map_.find(key_str);
+    if (iter == target_key_to_control_socket_map_.end()) {
+        LOG(INFO) << "transportMemTask local_rank_info rankId: "
               << local_rank_info->rankId
               << ", serverIdx: " << local_rank_info->serverIdx
               << ", deviceLogicId: " << local_rank_info->deviceLogicId
@@ -222,26 +226,22 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
               << ", devicePort: " << local_rank_info->devicePort
               << ", hostIp: " << inet_ntoa(local_rank_info->hostIp)
               << ", hostPort: " << local_rank_info->hostPort;
-    LOG(INFO) << "transportMemTask remote_rank_info rankId: "
-              << remote_rank_info->rankId
-              << ", serverIdx: " << remote_rank_info->serverIdx
-              << ", deviceLogicId: " << remote_rank_info->deviceLogicId
-              << ", devicePhyId: " << remote_rank_info->devicePhyId
-              << ", deviceIp: " << inet_ntoa(remote_rank_info->deviceIp)
-              << ", devicePort: " << remote_rank_info->devicePort
-              << ", hostIp: " << inet_ntoa(remote_rank_info->hostIp)
-              << ", hostPort: " << remote_rank_info->hostPort;
+        LOG(INFO) << "transportMemTask remote_rank_info rankId: "
+                << remote_rank_info->rankId
+                << ", serverIdx: " << remote_rank_info->serverIdx
+                << ", deviceLogicId: " << remote_rank_info->deviceLogicId
+                << ", devicePhyId: " << remote_rank_info->devicePhyId
+                << ", deviceIp: " << inet_ntoa(remote_rank_info->deviceIp)
+                << ", devicePort: " << remote_rank_info->devicePort
+                << ", hostIp: " << inet_ntoa(remote_rank_info->hostIp)
+                << ", hostPort: " << remote_rank_info->hostPort;
 
-    // 1、封装控制信息
-    RankControlInfo control_info;
-    control_info.deviceLogicId = local_rank_info->deviceLogicId;
-    control_info.devicePhyId = local_rank_info->devicePhyId;
-    control_info.hostIp = local_rank_info->hostIp;
-    control_info.deviceIp = local_rank_info->deviceIp;
-    // 2、查找对端，检查是否具备对应的socket，并发送本端的信息给对端
-    std::string key_str = inet_ntoa(remote_rank_info->hostIp) + std::to_string(remote_rank_info->devicePhyId);
-    auto iter = target_key_to_control_socket_map_.find(key_str);
-    if (iter == target_key_to_control_socket_map_.end()) {
+        // 1、封装控制信息
+        RankControlInfo control_info;
+        control_info.deviceLogicId = local_rank_info->deviceLogicId;
+        control_info.devicePhyId = local_rank_info->devicePhyId;
+        control_info.hostIp = local_rank_info->hostIp;
+        control_info.deviceIp = local_rank_info->deviceIp;
         // hccl_transport自建带外,发送控制面的host socket
         int client_socket = connectToTarget(inet_ntoa(remote_rank_info->hostIp), 
                                             remote_rank_info->hostPort);
@@ -466,13 +466,26 @@ int transportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
         }
     }
     auto mid = std::chrono::high_resolution_clock::now();
-    transport_mem->AddOpFence(stream);
+    ret = transport_mem->AddOpFence(stream);
+    if (ret) {
+        LOG(ERROR) << "transport_mem AddOpFence failed, ret: " << ret;
+        return -1; 
+    }
+
+    ret = aclrtSynchronizeStream(stream);
+    if (ret) {
+        LOG(ERROR) << "aclrtSynchronizeStream failed, ret: " << ret;
+        return -1; 
+    }
+
     auto stop = std::chrono::high_resolution_clock::now();
+#ifdef ASCEND_TIME_PRINT
     auto duration_sync = std::chrono::duration_cast<std::chrono::microseconds>(mid - start);
     auto duration_call = std::chrono::duration_cast<std::chrono::microseconds>(stop - mid);
     LOG(INFO) << "pid: " << pid << "; " << "thread submit one block size: "<< req_len;
     LOG(INFO) << "pid: " << pid << "; " << "thread sync stream spent: "<< duration_sync.count() << "us";
     LOG(INFO) << "pid: " << pid << "; " << "thread call write/read spent: "<< duration_call.count() << "us";
+#endif
     return 0;
 }
 

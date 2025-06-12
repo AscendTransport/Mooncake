@@ -8,3 +8,6 @@ target_link_libraries(memory_pool PUBLIC transfer_engine)
 
 add_executable(transfer_engine_ascend_one_sided transfer_engine_ascend_one_sided.cpp)
 target_link_libraries(transfer_engine_ascend_one_sided PUBLIC transfer_engine)
+
+add_executable(transfer_engine_ascend_perf transfer_engine_ascend_perf.cpp)
+target_link_libraries(transfer_engine_ascend_perf PUBLIC transfer_engine)
