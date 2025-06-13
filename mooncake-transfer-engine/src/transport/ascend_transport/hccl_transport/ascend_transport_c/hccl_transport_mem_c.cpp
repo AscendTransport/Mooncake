@@ -9,6 +9,7 @@
 #include <string>
 #include <pthread.h>
 #include <sys/time.h>
+#include <sys/epoll.h>
 #include <errno.h>
 #include "transport/ascend_transport/hccl_transport/hccl_transport_mem_c.h"
 
@@ -20,6 +21,7 @@ extern "C" {
 #define WRITE 1
 #define CONNECT_MAX 1000 // 允许的连接数
 #define RETRY_TIMES 3 //
+#define MAX_EVENTS 32
 
 HcclNetDevCtx vnicNetDevCtx_{nullptr};
 HcclNetDevCtx nicNetDevCtx_{nullptr};
@@ -40,6 +42,10 @@ std::vector<uint64_t> g_localMemLen;
 
 int g_server_socket_ = 0;
 struct sockaddr_in g_server_addr_;
+
+int g_epoll_fd = 0;
+struct epoll_event g_ev;
+struct epoll_event g_events[MAX_EVENTS];
 
 // 初始化函数失败重试机制
 #define RETRY_CALL(funcCall, errorMsg) \
@@ -146,7 +152,20 @@ static int initControlSocket(RankInfo *local_rank_info) {
         return ret;
     }
     LOG(INFO) << "initControlSocket successful, Server listening on host port" << ntohs(g_server_addr_.sin_port) << "..." << "g_server_socket_" << g_server_socket_;
-
+    g_epoll_fd = epoll_create1(0);
+    if (g_epoll_fd == -1) {
+        LOG(ERROR) << "epoll create Failed, ret: " << ret;
+        close(g_server_socket_);
+        return ret;
+    }
+    g_ev.events = EPOLLIN;
+    g_ev.data.fd = g_server_socket_;
+    ret = epoll_ctl(g_epoll_fd, EPOLL_CTL_ADD, g_server_socket_, &g_ev);
+    if (ret == -1) {
+        LOG(ERROR) << "epoll epoll_ctl Failed, ret: " << ret;
+        close(g_server_socket_);
+        return ret;
+    }
     return 0;
 }
 
@@ -532,6 +551,11 @@ static int acceptFromTarget() {
 int transportMemAccept(RankInfo *local_rank_info) {
     // hccl_transport自建带外,接受控制面的host socket
     int ret = 0;
+    int nfds = epoll_wait(g_epoll_fd, g_events, MAX_EVENTS, -1);
+    if (nfds == -1) {
+        LOG(INFO) << "epoll wait ...";
+        return nfds;
+    }
     int client_socket = acceptFromTarget();
     if (client_socket < 0) {
         return client_socket;
