@@ -218,11 +218,8 @@ int initiator() {
         requests.emplace_back(entry);
     }
 
-    ret = engine->submitTransfer(batch_id, requests);
-    if (ret) {
-        LOG(ERROR) << "Failed to submitTransfer, ret: " << ret;
-        return ret;
-    }
+    s = engine->submitTransfer(batch_id, requests);
+    LOG_ASSERT(s.ok());
     for (int task_id = 0; task_id < FLAGS_batch_size; ++task_id) {
         bool completed = false;
         TransferStatus status;
@@ -255,11 +252,8 @@ int initiator() {
         requests2.emplace_back(entry);
     }
 
-    ret = engine->submitTransfer(batch_id_2, requests2);
-    if (ret) {
-        LOG(ERROR) << "Failed to submitTransfer, ret: " << ret;
-        return ret;
-    }
+    s = engine->submitTransfer(batch_id_2, requests2);
+    LOG_ASSERT(s.ok());
     for (int task_id = 0; task_id < FLAGS_batch_size; ++task_id) {
         bool completed = false;
         TransferStatus status;
@@ -322,11 +316,8 @@ int initiator() {
             requests.emplace_back(entry);
         }
 
-        ret = engine->submitTransfer(batch_id, requests);
-        if (ret) {
-            LOG(ERROR) << "Failed to submitTransfer, ret: " << ret;
-            return ret;
-        }
+        s = engine->submitTransfer(batch_id, requests);
+        LOG_ASSERT(s.ok());
         for (int task_id = 0; task_id < FLAGS_batch_size; ++task_id) {
             bool completed = false;
             TransferStatus status;

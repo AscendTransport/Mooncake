@@ -204,17 +204,14 @@ int initiator() {
     std::vector<TransferRequest> tmp_requests;
     TransferRequest entry;
     entry.opcode = opcode;
-    entry.length = block_size;
+    entry.length = FLAGS_block_size;
     entry.source = (uint8_t *)tmp_devAddr;
     entry.target_id = segment_id;
     entry.target_offset = remote_base; 
     tmp_requests.emplace_back(entry);
 
-    ret = engine->submitTransfer(tmp_batch_id, tmp_requests);
-    if (ret) {
-        LOG(ERROR) << "Failed to submitTransfer, ret: " << ret;
-        return ret;
-    }
+    s = engine->submitTransfer(tmp_batch_id, tmp_requests);
+    LOG_ASSERT(s.ok());
 
     bool completed = false;
     TransferStatus status;
@@ -246,11 +243,8 @@ int initiator() {
             entry.target_offset = remote_base + block_size * j; 
             requests.emplace_back(entry);
         }
-        ret = engine->submitTransfer(batch_id, requests);
-        if (ret) {
-            LOG(ERROR) << "Failed to submitTransfer, ret: " << ret;
-            return ret;
-        }
+        s = engine->submitTransfer(batch_id, requests);
+        LOG_ASSERT(s.ok());
         for (int task_id = 0; task_id < FLAGS_batch_size; ++task_id) {
             completed = false;
             while (!completed) {

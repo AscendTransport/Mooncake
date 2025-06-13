@@ -56,7 +56,6 @@ struct RankControlInfo {
 
 
 
-
 extern int initTransportMem(RankInfo *local_rank_info);
 
 

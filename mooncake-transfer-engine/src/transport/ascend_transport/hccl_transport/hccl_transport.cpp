@@ -26,14 +26,13 @@ void HcclTransport::initiatorLoop(int deviceLogicId, int selfIdx){
     int ret = aclrtSetDevice(deviceLogicId);
     if (ret){
         LOG(ERROR) << "HcclTransport: aclrtSetDevice error, ret:" << ret;
-        return;
     }
 
     ret = aclrtCreateStream(&stream);
     if (ret){
         LOG(ERROR) << "HcclTransport: aclrtCreateStream error, ret:" << ret;
-        return;
     }
+    
     while(1) {
         std::unique_lock<std::mutex> lock(initiator_mutex_);
         if (allReqQueues_[selfIdx].empty()){
@@ -44,9 +43,11 @@ void HcclTransport::initiatorLoop(int deviceLogicId, int selfIdx){
         allReqQueues_[selfIdx].pop();
         lock.unlock();
         auto segment_desc = metadata_->getSegmentDescByID(slice->target_id);
+        // 请求的target_id错误，无法发送
         if (!segment_desc) {
-            LOG(ERROR) << "Unable to get target segment ID, please recheck";
-            return;
+            LOG(ERROR) << "Unable to get target segment ID, please recheck, segment ID:" << slice->target_id;
+            slice->markFailed();
+            continue;
         }
 
         remote_rank_info_.rankId = segment_desc->rank_info.rankId;
@@ -60,12 +61,12 @@ void HcclTransport::initiatorLoop(int deviceLogicId, int selfIdx){
 
         ret = transportMemTask(&local_rank_info_, &remote_rank_info_, slice->opcode,
             slice->hccl.dest_addr, slice->length, slice->source_addr, stream);
-        if (ret != HCCL_SUCCESS){
+        if (ret){
             LOG(ERROR) << "HcclTransport: transportMemTask error, ret:" << ret;
             slice->markFailed();
         } else {
             slice->markSuccess();
-            slice->task->transferred_bytes = slice->length;
+            slice->task->transferred_bytes += slice->length;
         }
     }
 }
@@ -74,13 +75,11 @@ void HcclTransport::acceptLoop(int deviceLogicId){
     int ret = aclrtSetDevice(deviceLogicId);
     if (ret) {
         LOG(ERROR) << "HcclTransport: aclrtSetDevice failed ret:" << ret;
-        return;
     }
     while(1) {
         ret = transportMemAccept(&local_rank_info_);
         if (ret) {
             LOG(ERROR) << "HcclTransport: transportMemAccept failed ret:" << ret;
-            return;
         } 
     }
 }
@@ -148,7 +147,7 @@ int HcclTransport::getDevIdAndIpPortFromServerName(std::string& identifier, std:
 int HcclTransport::findDeviceInfo(const cJSON* root, int devicePhyId) {
     int deviceLogicId = 0;
     int ret = aclrtGetDevice(&deviceLogicId);
-    if (ret != 0) {
+    if (ret) {
         LOG(ERROR) << "HcclTransport: aclrtGetDevice failed." << ret;
         return ret;
     }
@@ -270,13 +269,13 @@ int HcclTransport::install(std::string &local_server_name,
     int devicePhyId;
     metadata_ = meta;
     ret = getDevIdAndIpPortFromServerName(local_server_name, ip, port, devicePhyId);
-    if (ret < 0){
+    if (ret){
         LOG(ERROR) << "HcclTransport: getDevIdAndIpPortFromServerName failed, ret: " << ret;
         return ret; 
     }
     // 以ip:port作为desc_name
     local_server_name_ = ip + ":" + std::to_string(port);
-    LOG(INFO) << "HcclTransport: local devicePhyId: " << devicePhyId  << ", local_server_name: " << local_server_name;
+    LOG(INFO) << "HcclTransport: begin to install transport, local devicePhyId: " << devicePhyId  << ", local_server_name: " << local_server_name;
 
     // add to rankinfo_
     ret = rankTableParse(devicePhyId);
@@ -287,26 +286,26 @@ int HcclTransport::install(std::string &local_server_name,
 
     ret = allocateLocalSegmentID();
     if (ret) {
-        LOG(ERROR) << "HcclTransport: cannot allocate local segment, ret: "<< ret;
+        LOG(ERROR) << "HcclTransport: cannot allocate local segment, ret: " << ret;
         return ret;
     }
 
     ret = metadata_->updateLocalSegmentDesc();
     if (ret) {
         LOG(ERROR) << "HcclTransport: cannot publish segments, "
-                      "check the availability of metadata storage, ret: "<< ret;
+                      "check the availability of metadata storage, ret: " << ret;
         return ret;
     }
 
     ret = initTransportMem(&local_rank_info_);
     if (ret) {
-        LOG(ERROR) << "HcclTransport: initTransportMem failed, ret: "<< ret;
+        LOG(ERROR) << "HcclTransport: initTransportMem failed, ret: " << ret;
         return ret;
     }
 
     ret = initPdThread();
     if (ret) {
-        LOG(ERROR) << "HcclTransport: initPdThread failed, ret: "<< ret;
+        LOG(ERROR) << "HcclTransport: initPdThread failed, ret: " << ret;
         return ret;
     }
 
@@ -416,13 +415,13 @@ int HcclTransport::registerLocalMemory(void *addr, size_t length,
 
     int ret;
     ret = regLocalRmaMem(addr, length);
-    if(ret){
+    if (ret) {
         LOG(ERROR) << "HcclTransport: reglocalRmaMem failed, ret:" << ret;
         return ret;
     }
 
     ret = metadata_->addLocalMemoryBuffer(buffer_desc, update_metadata);
-    if(ret){
+    if (ret) {
         LOG(ERROR) << "HcclTransport: addLocalMemoryBuffer failed,ret: " << ret;
         return ret;
     }
