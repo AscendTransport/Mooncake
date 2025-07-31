@@ -16,7 +16,6 @@
 # If git clone fails, you can place dependencies and Mooncake source code in a directory for compilation and installation.
 
 #!/bin/bash
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 TARGET_DIR="$SCRIPT_DIR/../../.."
