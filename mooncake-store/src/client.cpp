@@ -230,32 +230,63 @@ ErrorCode Client::ConnectToMaster(const std::string& master_server_entry) {
     }
 }
 
-ErrorCode Client::InitTransferEngine(
-    const std::string& local_hostname, const std::string& metadata_connstring,
-    const std::string& protocol,
-    const std::optional<std::string>& device_names) {
-    // get auto_discover and filters from env
-    std::optional<bool> env_auto_discover = get_auto_discover();
-    bool auto_discover = false;
-    if (env_auto_discover.has_value()) {
-        // Use user-specified auto-discover setting
-        auto_discover = env_auto_discover.value();
-    } else {
-        // Enable auto-discover for RDMA if no devices are specified
-        if (protocol == "rdma" && !device_names.has_value()) {
-            LOG(INFO) << "Set auto discovery ON by default for RDMA protocol, "
-                         "since no "
-                         "device names provided";
-            auto_discover = true;
-        }
+std::vector<std::string> buildDeviceFilter(const std::string &device_names) {
+    std::stringstream ss(device_names);
+    std::string item;
+    std::vector<std::string> tokens;
+    while (getline(ss, item, ',')) {
+        tokens.push_back(item);
     }
-    transfer_engine_.setAutoDiscover(auto_discover);
+    return tokens;
+}
 
-    auto [hostname, port] = parseHostNameWithPort(local_hostname);
-    int rc = transfer_engine_.init(metadata_connstring, local_hostname,
-                                   hostname, port);
-    if (rc != 0) {
-        LOG(ERROR) << "Failed to initialize transfer engine, rc=" << rc;
+ErrorCode Client::InitTransferEngine(const std::string& local_hostname,
+                                     const std::string& metadata_connstring,
+                                     const std::string& protocol,
+                                     void** protocol_args) {
+    // get auto_discover and filters from env
+    bool auto_discover = get_auto_discover();
+
+    LOG(INFO) << "Pooling InitTransferEngine:" << g_transfer_engine;
+    if (g_transfer_engine) {
+        transfer_engine_= g_transfer_engine;
+        LOG(INFO) << "Pooling multiplexing transferEngine";
+    } else {
+        auto [hostname, port] = parseHostNameWithPort(local_hostname);
+        std::string device_name_safe = "";
+        auto device_filter = buildDeviceFilter(device_name_safe);
+        transfer_engine_ = std::make_shared<TransferEngine>(true, device_filter);
+        int rc = transfer_engine_->init(metadata_connstring, local_hostname,
+                                    hostname, port);
+        CHECK_EQ(rc, 0) << "Failed to initialize transfer engine";
+        g_transfer_engine = transfer_engine_;
+    }
+    transfer_engine_->setAutoDiscover(auto_discover);
+    transfer_engine_->setWhitelistFilters(
+        get_auto_discover_filters(auto_discover));
+
+    Transport* transport = nullptr;
+    if (protocol == "rdma") {
+        LOG(INFO) << "transport_type=rdma";
+        transport = transfer_engine_->installTransport("rdma", protocol_args);
+    } else if (protocol == "tcp") {
+        LOG(INFO) << "transport_type=tcp";
+        try {
+            transport = transfer_engine_->installTransport("tcp", protocol_args);
+        } catch (std::exception& e) {
+            LOG(ERROR) << "tcp_transport_install_failed error_message=\""
+                       << e.what() << "\"";
+            return ErrorCode::INTERNAL_ERROR;
+        }
+    } else if (protocol == "ascend") {
+        LOG(INFO) << "transport protocol=" << protocol;
+        transport = transfer_engine_->installTransport("ascend", protocol_args);
+    } else {
+        LOG(ERROR) << "unsupported_protocol protocol=" << protocol;
+        return ErrorCode::INVALID_PARAMS;
+    }
+    if (!transport) {
+        LOG(ERROR) << "Failed to install transport";
         return ErrorCode::INTERNAL_ERROR;
     }
 
@@ -341,12 +372,10 @@ ErrorCode Client::InitTransferEngine(
     }
 
     // Initialize TransferSubmitter after transfer engine is ready
-    // Keep using logical local_hostname for name-based behaviors; endpoint is
-    // used separately where needed.
+    // transfer_submitter_ = std::make_unique<TransferSubmitter>(
+    //     transfer_engine_, local_hostname, storage_backend_);
     transfer_submitter_ = std::make_unique<TransferSubmitter>(
-        transfer_engine_, storage_backend_,
-        metrics_ ? &metrics_->transfer_metric : nullptr);
-
+        *transfer_engine_, local_hostname, storage_backend_);
     return ErrorCode::OK;
 }
 
@@ -354,8 +383,22 @@ std::optional<std::shared_ptr<Client>> Client::Create(
     const std::string& local_hostname, const std::string& metadata_connstring,
     const std::string& protocol, const std::optional<std::string>& device_names,
     const std::string& master_server_entry) {
-    auto client = std::shared_ptr<Client>(
-        new Client(local_hostname, metadata_connstring));
+    // If MOONCAKE_STORAGE_ROOT_DIR is set, use it as the storage root directory
+    std::string storage_root_dir =
+        std::getenv("MOONCAKE_STORAGE_ROOT_DIR")
+            ? std::getenv("MOONCAKE_STORAGE_ROOT_DIR")
+            : "";
+
+    std::string local_name = local_hostname;     
+    if (g_transfer_engine) {
+        local_name = g_transfer_engine->local_server_name_;
+        LOG(INFO) << "Pooling multiplexing local_name:" << local_name;
+        g_separate_pool = false;
+    } else {
+        g_separate_pool = true;
+    }
+    LOG(INFO) << "master_server_entry:" << master_server_entry;
+    auto client = std::shared_ptr<Client>(new Client(local_name, metadata_connstring, storage_root_dir));
 
     ErrorCode err = client->ConnectToMaster(master_server_entry);
     if (err != ErrorCode::OK) {
@@ -383,13 +426,14 @@ std::optional<std::shared_ptr<Client>> Client::Create(
             LOG(ERROR) << "Invalid fsdir format: " << dir_string;
         }
     }
-
-    // Initialize transfer engine
-    err = client->InitTransferEngine(local_hostname, metadata_connstring,
-                                     protocol, device_names);
-    if (err != ErrorCode::OK) {
-        LOG(ERROR) << "Failed to initialize transfer engine";
-        return std::nullopt;
+    if (protocol != "ascend_no_transport") {
+            // Initialize transfer engine
+        err = client->InitTransferEngine(local_name, metadata_connstring,
+                                        protocol, protocol_args);
+        if (err != ErrorCode::OK) {
+            LOG(ERROR) << "Failed to initialize transfer engine";
+            return std::nullopt;
+        }
     }
 
     return client;
@@ -607,8 +651,8 @@ std::vector<tl::expected<void, ErrorCode>> Client::BatchGet(
             continue;
         }
 
-        VLOG(1) << "Submitted transfer for key " << key
-                << " using strategy: " << static_cast<int>(future->strategy());
+        // LOG(INFO) << "Submitted transfer for key " << key
+                // << " using strategy: " << static_cast<int>(future->strategy());
 
         pending_transfers.emplace_back(i, key, std::move(*future));
     }
@@ -621,31 +665,12 @@ std::vector<tl::expected<void, ErrorCode>> Client::BatchGet(
                        << " with error: " << static_cast<int>(result);
             results[index] = tl::unexpected(result);
         } else {
-            VLOG(1) << "Transfer completed successfully for key: " << key;
+            // LOG(INFO) << "Transfer completed successfully for key: " << key;
             results[index] = {};
         }
     }
 
-    // As lease expired is a rare case, we check all the results with the same
-    // time_point to avoid too many syscalls
-    std::chrono::steady_clock::time_point now =
-        std::chrono::steady_clock::now();
-    for (size_t i = 0; i < object_keys.size(); ++i) {
-        if (results[i].has_value() && query_results[i].IsLeaseExpired(now)) {
-            LOG(WARNING) << "lease_expired_before_data_transfer_completed key="
-                         << object_keys[i];
-            results[i] = tl::unexpected(ErrorCode::LEASE_EXPIRED);
-        }
-    }
-
-    auto us_batch_get = std::chrono::duration_cast<std::chrono::microseconds>(
-                            std::chrono::steady_clock::now() - t0_batch_get)
-                            .count();
-    if (metrics_) {
-        metrics_->transfer_metric.batch_get_latency_us.observe(us_batch_get);
-    }
-
-    VLOG(1) << "BatchGet completed for " << object_keys.size() << " keys";
+    // LOG(INFO) << "BatchGet completed for " << object_keys.size() << " keys";
     return results;
 }
 
@@ -794,6 +819,7 @@ std::vector<PutOperation> Client::CreatePutOperations(
     ops.reserve(keys.size());
     for (size_t i = 0; i < keys.size(); ++i) {
         ops.emplace_back(keys[i], batched_slices[i]);
+        // LOG(ERROR) << "batched_slices size: " << batched_slices[i].size();
     }
     return ops;
 }
@@ -805,7 +831,7 @@ void Client::StartBatchPut(std::vector<PutOperation>& ops,
 
     keys.reserve(ops.size());
     slice_lengths.reserve(ops.size());
-
+    // LOG(ERROR) << "ops size: " << ops.size();
     for (const auto& op : ops) {
         keys.emplace_back(op.key);
 
@@ -814,9 +840,10 @@ void Client::StartBatchPut(std::vector<PutOperation>& ops,
         for (const auto& slice : op.slices) {
             slice_sizes.emplace_back(slice.size);
         }
+        // LOG(ERROR) << "slicen size: " << slice_sizes.size();
         slice_lengths.emplace_back(std::move(slice_sizes));
     }
-
+    // LOG(ERROR) << "slice_lengths size: " << slice_lengths.size();
     auto start_responses =
         master_client_.BatchPutStart(keys, slice_lengths, config);
 
@@ -1178,9 +1205,10 @@ tl::expected<void, ErrorCode> Client::MountSegment(const void* buffer,
             return tl::unexpected(ErrorCode::INVALID_PARAMS);
         }
     }
+    std::string kWildcardLocation_pool = "cpu";
+    int rc = transfer_engine_->registerLocalMemory(
+        (void*)buffer, size, kWildcardLocation_pool, true, true);
 
-    int rc = transfer_engine_.registerLocalMemory(
-        (void*)buffer, size, kWildcardLocation, true, true);
     if (rc != 0) {
         LOG(ERROR) << "register_local_memory_failed base=" << buffer
                    << " size=" << size << ", error=" << rc;
@@ -1241,7 +1269,7 @@ tl::expected<void, ErrorCode> Client::UnmountSegment(const void* buffer,
         return tl::unexpected(err);
     }
 
-    int rc = transfer_engine_.unregisterLocalMemory(
+    int rc = transfer_engine_->unregisterLocalMemory(
         reinterpret_cast<void*>(segment->second.base));
     if (rc != 0) {
         LOG(ERROR) << "Failed to unregister transfer buffer with transfer "
@@ -1265,7 +1293,7 @@ tl::expected<void, ErrorCode> Client::RegisterLocalMemory(
     if (!check_result) {
         return tl::unexpected(check_result.error());
     }
-    if (this->transfer_engine_.registerLocalMemory(
+    if (this->transfer_engine_->registerLocalMemory(
             addr, length, location, remote_accessible, update_metadata) != 0) {
         return tl::unexpected(ErrorCode::INVALID_PARAMS);
     }
@@ -1274,7 +1302,7 @@ tl::expected<void, ErrorCode> Client::RegisterLocalMemory(
 
 tl::expected<void, ErrorCode> Client::unregisterLocalMemory(
     void* addr, bool update_metadata) {
-    if (this->transfer_engine_.unregisterLocalMemory(addr, update_metadata) !=
+    if (this->transfer_engine_->unregisterLocalMemory(addr, update_metadata) !=
         0) {
         return tl::unexpected(ErrorCode::INVALID_PARAMS);
     }

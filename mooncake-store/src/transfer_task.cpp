@@ -1,9 +1,9 @@
 #include "transfer_task.h"
-
 #include <glog/logging.h>
-
 #include <algorithm>
 #include <cstdlib>
+#include "utils.h"
+#include "acl/acl.h"
 
 namespace mooncake {
 
@@ -12,7 +12,7 @@ namespace mooncake {
 // ============================================================================
 // to fully utilize the available ssd bandwidth, we use a default of 10 worker
 // threads.
-constexpr int kDefaultFilereadWorkers = 10;
+constexpr int kDefaultFilereadWorkers = 1;
 
 FilereadWorkerPool::FilereadWorkerPool(std::shared_ptr<StorageBackend>& backend)
     : shutdown_(false) {
@@ -123,11 +123,17 @@ constexpr int kDefaultMemcpyWorkers = 1;
 MemcpyWorkerPool::MemcpyWorkerPool() : shutdown_(false) {
     VLOG(1) << "Creating MemcpyWorkerPool with " << kDefaultMemcpyWorkers
             << " workers";
-
+    int deviceLogicId;
+    int ret = aclrtGetDevice(&deviceLogicId);
+    if (ret) {
+        LOG(ERROR) << "MemcpyWorkerPool: aclrtGetDevice failed, ret: " << ret;
+        return;
+    }
     // Start worker threads
     workers_.reserve(kDefaultMemcpyWorkers);
     for (int i = 0; i < kDefaultMemcpyWorkers; ++i) {
-        workers_.emplace_back(&MemcpyWorkerPool::workerThread, this);
+        workers_.emplace_back(&MemcpyWorkerPool::workerThread, this,
+                              deviceLogicId);
     }
 }
 
@@ -163,8 +169,17 @@ void MemcpyWorkerPool::submitTask(MemcpyTask task) {
     queue_cv_.notify_one();
 }
 
-void MemcpyWorkerPool::workerThread() {
+void MemcpyWorkerPool::workerThread(int deviceLogicId) {
     VLOG(2) << "MemcpyWorkerPool worker thread started";
+    int ret = aclrtSetDevice(deviceLogicId);
+    if (ret) {
+        LOG(ERROR) << "HcclTransport: aclrtSetDevice failed ret:" << ret;
+    }
+    aclrtStream stream;
+    ret = aclrtCreateStream(&stream);
+    if (ret) {
+        LOG(ERROR) << "HcclTransport: aclrtCreateStream error, ret:" << ret;
+    }
 
     while (true) {
         MemcpyTask task({}, nullptr);
@@ -190,7 +205,35 @@ void MemcpyWorkerPool::workerThread() {
         if (task.state) {
             try {
                 for (const auto& op : task.operations) {
-                    std::memcpy(op.dest, op.src, op.size);
+                    if (op.is_write) {
+                        ret = aclrtMemcpy(op.dest, op.size, op.src, op.size,
+                                          ACL_MEMCPY_DEVICE_TO_HOST);
+                        if (ret != ACL_ERROR_NONE) {
+                            LOG(ERROR)
+                                << "Failed to copy data from device to host, "
+                                   "ret: "
+                                << ret << ", local:" << op.src
+                                << ", dest:" << op.dest << ", size:" << op.size;
+                        }
+                        LOG(INFO)
+                            << "pool write own ret:" << ret
+                            << "op.dest:" << op.dest << ", op.src:" << op.src
+                            << ", len:" << op.size;
+                    } else {
+                        ret = aclrtMemcpy(op.dest, op.size, op.src, op.size,
+                                          ACL_MEMCPY_HOST_TO_DEVICE);
+                        if (ret != ACL_ERROR_NONE) {
+                            LOG(ERROR)
+                                << "Failed to copy data from host to device, "
+                                   "ret: "
+                                << ret << ", local:" << op.src
+                                << ", dest:" << op.dest << ", size:" << op.size;
+                        }
+                        LOG(INFO)
+                            << "pool read own ret:" << ret
+                            << "op.dest:" << op.dest << ", op.src:" << op.src
+                            << ", len:" << op.size;
+                    }
                 }
 
                 VLOG(2) << "Memcpy task completed successfully with "
@@ -448,14 +491,14 @@ std::optional<TransferFuture> TransferSubmitter::submitMemcpyOperation(
             // buffer)
             dest = slice.ptr;
             src = reinterpret_cast<const void*>(handle.buffer_address_);
+            operations.emplace_back(dest, src, handle.size_, false);
         } else {
             // WRITE: from slice (local buffer) to handle (remote
             // buffer)
             dest = reinterpret_cast<void*>(handle.buffer_address_);
             src = slice.ptr;
+            operations.emplace_back(dest, src, handle.size_, true);
         }
-
-        operations.emplace_back(dest, src, handle.size_);
     }
 
     // Submit memcpy operations to worker pool for async execution
@@ -473,10 +516,10 @@ std::optional<TransferFuture> TransferSubmitter::submitTransferEngineOperation(
     std::vector<Slice>& slices, Transport::TransferRequest::OpCode op_code) {
     // Create transfer requests
     std::vector<Transport::TransferRequest> requests;
-    requests.reserve(handles.size());
-
-    for (size_t i = 0; i < handles.size(); ++i) {
-        const auto& handle = handles[i];
+    requests.reserve(slices.size());
+    uint64_t offset = 0;
+    const auto& handle = handles[0];
+    for (size_t i = 0; i < slices.size(); ++i) {
         const auto& slice = slices[i];
 
         if (slice.ptr == nullptr) continue;
@@ -486,24 +529,31 @@ std::optional<TransferFuture> TransferSubmitter::submitTransferEngineOperation(
                        << handle.buffer_address_;
             return std::nullopt;
         }
-
-        Transport::SegmentHandle seg =
-            engine_.openSegment(handle.transport_endpoint_);
-
+        int device_id = -1;
+        auto [host_name, port] =
+            parseHostNameWithPortAscend(handle.segment_name_, &device_id);
+        std::string segment_id = host_name + ":" + std::to_string(port);
+        Transport::SegmentHandle seg = engine_.openSegment(segment_id);
         if (seg == static_cast<uint64_t>(ERR_INVALID_ARGUMENT)) {
             LOG(ERROR) << "Failed to open segment for endpoint='"
                        << handle.transport_endpoint_ << "'";
             return std::nullopt;
         }
-
+        // LOG(INFO) << "Transfer Engine, parseHostNameWithPortAscend, Server:"
+        // << host_name << ", port"
+        //           << port << ", device_id" << device_id << ", source:" <<
+        //           slice.ptr << ", target_id:" << seg
+        //           << ", target_offset" << handle.buffer_address_ << ",
+        //           length:" << slice.size;
         Transport::TransferRequest request;
         request.opcode = op_code;
         request.source = static_cast<char*>(slice.ptr);
         request.target_id = seg;
-        request.target_offset = handle.buffer_address_;
-        request.length = handle.size_;
+        request.target_offset = handle.buffer_address_ + offset;
+        request.length = slice.size;
 
         requests.emplace_back(request);
+        offset += slice.size;
     }
 
     // Allocate batch ID
@@ -603,15 +653,14 @@ bool TransferSubmitter::validateTransferParams(
                    << " slices_size=" << slices.size();
         return false;
     }
-
-    for (size_t i = 0; i < handles.size(); ++i) {
-        if (handles[i].size_ != slices[i].size) {
-            LOG(ERROR) << "Size of replica partition " << i << " ("
-                       << handles[i].size_
-                       << ") does not match provided buffer (" << slices[i].size
-                       << ")";
-            return false;
-        }
+    uint64_t all_slice_len = 0;
+    for (size_t i = 0; i < slices.size(); ++i) {
+        all_slice_len += slices[i].size;
+    }
+    if (handles[0].size_ != all_slice_len) {
+        LOG(ERROR) << "handles len:" << handles[0].size_
+                   << ", all_slice_len:" << all_slice_len;
+        return false;
     }
 
     return true;
