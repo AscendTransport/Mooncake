@@ -101,16 +101,29 @@ struct MemBlock {
 
 struct ConnectionInfo {
     int tcp_socket;
+    int recv_socket;
     std::shared_ptr<hccl::HcclSocket> hccl_ctrl_socket;
     std::shared_ptr<hccl::HcclSocket> hccl_data_socket;
     std::shared_ptr<hccl::TransportMem> transport_mem;
     int total_len;
 };
 
+struct SingleCopyInfo {
+    uint64_t host_addr;
+    uint64_t device_addr;
+    uint64_t len;
+    bool is_read;
+    bool is_copy;
+    uint64_t local_id;
+    uint64_t remote_id;
+    uint64_t offset;
+};
+
 extern std::unordered_map<std::string, ConnectionInfo>
     g_target_key_to_connection_map;
 extern std::vector<MemBlock> g_localBuffer;
 extern int g_epoll_fd_agg;
+extern int g_epoll_fd_target;
 
 extern int initServerNetSocket(RankInfo *local_rank_info);
 

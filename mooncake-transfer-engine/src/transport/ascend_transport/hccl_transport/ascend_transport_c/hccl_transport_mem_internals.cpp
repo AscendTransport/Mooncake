@@ -41,6 +41,7 @@ std::vector<MemBlock> g_localBuffer;
 int g_epoll_fd_agg = 0;
 int g_server_socket = 0;
 int g_epoll_fd = 0;
+int g_epoll_fd_target = 0;
 struct epoll_event g_ev;
 struct epoll_event g_events[MAX_EVENTS];
 
@@ -198,7 +199,12 @@ int initControlSocket(RankInfo *local_rank_info, bool aggregateEnabled) {
         close(g_server_socket);
         return g_epoll_fd;
     }
-
+    g_epoll_fd_target = epoll_create1(0);
+    if (g_epoll_fd_target == -1) {
+        LOG(ERROR) << "epoll fd target create Failed, ret: " << ret << ", fd:" << g_epoll_fd_target;
+        close(g_server_socket);
+        return g_epoll_fd_target;
+    }
     if (aggregateEnabled) {
         g_epoll_fd_agg = epoll_create1(0);
         if (g_epoll_fd_agg == -1) {
@@ -319,6 +325,12 @@ int controlInfoSend(RankInfo *local_rank_info, RankInfo *remote_rank_info) {
         LOG(ERROR) << "client connect failed";
         return client_socket;
     }
+    int recv_socket = connectToTarget(inet_ntoa(remote_rank_info->hostIp),
+                                        remote_rank_info->hostPort);
+    if (recv_socket < 0) {
+        LOG(ERROR) << "client connect failed";
+        return recv_socket;
+    }
     ret = send(client_socket, &control_info, sizeof(RankControlInfo), 0);
     if (ret < 0) {
         LOG(ERROR) << "send control_info failed, ret: " << ret
@@ -326,6 +338,16 @@ int controlInfoSend(RankInfo *local_rank_info, RankInfo *remote_rank_info) {
         return ret;
     }
     g_target_key_to_connection_map[key_str].tcp_socket = client_socket;
+    g_target_key_to_connection_map[key_str].recv_socket = recv_socket;
+    LOG(INFO) << "target key: " << key_str << ", tcp_socket:" << client_socket
+                << ", recv_socket: " << recv_socket;
+    struct epoll_event event;
+    event.events = EPOLLIN;
+    event.data.fd = recv_socket;
+    if (epoll_ctl(g_epoll_fd_target, EPOLL_CTL_ADD, recv_socket, &event) == -1) {
+        LOG(ERROR) << "epoll_ctl add recv_socket fd failed";
+        return -1;
+    }
     return 0;
 }
 

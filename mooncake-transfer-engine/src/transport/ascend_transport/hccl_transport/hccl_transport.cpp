@@ -55,6 +55,9 @@ HcclTransport::~HcclTransport() {
         if (targetAcceptThread_.joinable()) {
             targetAcceptThread_.join();
         }
+        if (targetThread_.joinable()) {
+            targetThread_.join();
+        }
     }
 }
 
@@ -95,9 +98,10 @@ int HcclTransport::nonAggTransport(std::vector<Slice *> &slice_list,
     }
 
     for (auto slice : slice_list) {
+        LOG(INFO) << "slice hccl dest addr type:" << slice->hccl.dest_addr_type;
         ret = nonAggTransportMemTask(&local_rank_info_, &remote_rank_info_,
                                      slice->opcode, slice->hccl.dest_addr,
-                                     slice->length, slice->source_addr, stream);
+                                     slice->length, slice->source_addr, slice->hccl.dest_addr_type, stream);
         if (ret) {
             LOG(ERROR) << "HcclTransport: nonAggTransportMemTask error, local "
                           "devicePhyId: "
@@ -106,13 +110,23 @@ int HcclTransport::nonAggTransport(std::vector<Slice *> &slice_list,
                        << remote_rank_info_.devicePhyId
                        << ", source_addr: " << slice->source_addr
                        << ", dest_addr: " << slice->hccl.dest_addr
+                       << ", dest_addr_type: " << slice->hccl.dest_addr_type
                        << ", ret: " << ret;
             slice->markFailed();
             slice->status = Slice::SliceStatus::FAILED;
             return ret;
         }
     }
-
+    if (inet_ntoa(local_rank_info_.hostIp) + std::to_string(local_rank_info_.devicePhyId) == 
+        inet_ntoa(remote_rank_info_.hostIp) + std::to_string(remote_rank_info_.devicePhyId)) {
+        for (auto slice : slice_list) {
+            if (slice->status != Slice::SliceStatus::FAILED) {
+                slice->markSuccess();
+                slice->task->transferred_bytes = slice->length;
+            }
+        }
+        return 0;
+    }
     auto taskDispatch = std::chrono::high_resolution_clock::now();
     ret = transportMemAddOpFence(&remote_rank_info_, stream);
     if (ret) {
@@ -136,6 +150,28 @@ int HcclTransport::nonAggTransport(std::vector<Slice *> &slice_list,
             slice->markFailed();
         }
         return ret;
+    }
+    for (auto slice : slice_list) {
+        if (slice->hccl.dest_addr_type == DDR) {
+            ret = transportMemIntegrate(&local_rank_info_, &remote_rank_info_,
+                                        slice->opcode, slice->hccl.dest_addr,
+                                        slice->length, slice->source_addr, slice->hccl.dest_addr_type,
+                                        stream);
+            if (ret) {
+                LOG(ERROR) << "HcclTransport: nonAggTransportMemTask error, local "
+                            "devicePhyId: "
+                        << local_rank_info_.devicePhyId
+                        << ", remote devicePhyId: "
+                        << remote_rank_info_.devicePhyId
+                        << ", source_addr: " << slice->source_addr
+                        << ", dest_addr: " << slice->hccl.dest_addr
+                        << ", dest_addr_type: " << slice->hccl.dest_addr_type
+                        << ", ret: " << ret;
+                slice->markFailed();
+                slice->status = Slice::SliceStatus::FAILED;
+                return ret;
+            }
+        }
     }
 
     for (auto slice : slice_list) {
@@ -215,6 +251,26 @@ void HcclTransport::targetAcceptLoop(int deviceLogicId) {
     }
 }
 
+void HcclTransport::targetLoop(int deviceLogicId) {
+    aclrtStream stream;
+    int ret = aclrtSetDevice(deviceLogicId);
+    if (ret) {
+        LOG(ERROR) << "HcclTransport: aclrtSetDevice error, ret: " << ret;
+    }
+
+    ret = aclrtCreateStream(&stream);
+    if (ret) {
+        LOG(ERROR) << "HcclTransport: aclrtCreateStream error, ret: " << ret;
+    }
+    
+    while (running_) {
+        ret = transportMemTarget(stream);
+        if (ret) {
+            LOG(ERROR) << "HcclTransport: transportMemTarget failed ret: " << ret;
+        }
+    }
+}
+
 int HcclTransport::startNonAggThreads() {
     pid_t pid = getpid();
     int ret = 0;
@@ -229,7 +285,9 @@ int HcclTransport::startNonAggThreads() {
         std::thread(&HcclTransport::initiatorLoop, this, deviceLogicId);
     targetAcceptThread_ =
         std::thread(&HcclTransport::targetAcceptLoop, this, deviceLogicId);
-
+    targetThread_ =
+        std::thread(&HcclTransport::targetLoop, this, deviceLogicId);
+    
     LOG(INFO) << "HcclTransport: startNonAggThreads, pid: " << pid
               << ", deviceLogicId: " << deviceLogicId;
     return 0;
@@ -471,6 +529,8 @@ Status HcclTransport::submitTransfer(
         slice->length = request.length;
         slice->opcode = request.opcode;
         slice->hccl.dest_addr = request.target_offset;
+        slice->hccl.dest_addr_type = request.target_offset_type;
+        LOG(ERROR) << "HcclTransport: submitTransfer type:" << slice->hccl.dest_addr_type;        
         slice->task = &task;
         slice->target_id = request.target_id;
         slice->status = Slice::PENDING;
@@ -504,6 +564,8 @@ Status HcclTransport::submitTransferTask(
         slice->length = request.length;
         slice->opcode = request.opcode;
         slice->hccl.dest_addr = request.target_offset;
+        slice->hccl.dest_addr_type = request.target_offset_type;
+        LOG(ERROR) << "HcclTransport: submitTransferTask type:" << slice->hccl.dest_addr_type;        
         slice->task = &task;
         slice->target_id = request.target_id;
         slice->status = Slice::PENDING;
@@ -546,6 +608,7 @@ Status HcclTransport::getTransferStatus(BatchID batch_id, size_t task_id,
     return Status::OK();
 }
 
+uint64_t g_transfer_dev_len = 0x4000000;
 int HcclTransport::registerLocalMemory(void *addr, size_t length,
                                        const std::string &location,
                                        bool remote_accessible,
@@ -557,15 +620,21 @@ int HcclTransport::registerLocalMemory(void *addr, size_t length,
     buffer_desc.length = (uint64_t)length;
 
     int ret;
-
     if (location == "cpu") {
-            
-    }
-
-    if (aggregateEnabled_) {
-        aggRegLocalMem(buffer_desc.addr, buffer_desc.length, false);
+        LOG(INFO) << "HcclTransport: registerLocalMemory addr: "<< addr << ", len:" << length;
+        void *dev_addr = NULL;
+        ret = aclrtMalloc(&dev_addr, g_transfer_dev_len, ACL_MEM_MALLOC_NORMAL_ONLY);
+        if (ret != ACL_ERROR_NONE) {
+            LOG(ERROR) << "failed to allocate device mem len: "<< g_transfer_dev_len;
+            return ret;
+        }
+        nonAggRegLocalMem((uint64_t)dev_addr, g_transfer_dev_len, true);
     } else {
-        nonAggRegLocalMem(buffer_desc.addr, buffer_desc.length);
+        if (aggregateEnabled_) {
+            aggRegLocalMem(buffer_desc.addr, buffer_desc.length, false);
+        } else {
+            nonAggRegLocalMem(buffer_desc.addr, buffer_desc.length, false);
+        }
     }
 
     ret = metadata_->addLocalMemoryBuffer(buffer_desc, update_metadata);

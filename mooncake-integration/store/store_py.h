@@ -137,6 +137,9 @@ class DistributedObjectStore {
                                     const std::vector<void *> &buffers,
                                     const std::vector<size_t> &sizes);
 
+    std::vector<int> batch_get_into_ascend(const std::string key,
+                                           const std::vector<void *> &buffers,
+                                           const std::vector<size_t> &sizes);
     /**
      * @brief Put object data directly from a pre-allocated buffer
      * @param key Key of the object to put
@@ -188,6 +191,11 @@ class DistributedObjectStore {
         const std::vector<void *> &buffers, const std::vector<size_t> &sizes,
         const ReplicateConfig &config = ReplicateConfig{});
 
+    std::vector<int> batch_put_from_ascend(
+        const std::string key,
+        const std::vector<void *> &buffers, const std::vector<size_t> &sizes,
+        const ReplicateConfig &config = ReplicateConfig{});
+    
     int put_parts(const std::string &key,
                   std::vector<std::span<const char>> values,
                   const ReplicateConfig &config = ReplicateConfig{});
@@ -293,12 +301,21 @@ class DistributedObjectStore {
         const std::vector<std::string> &keys,
         const std::vector<void *> &buffers, const std::vector<size_t> &sizes);
 
+    std::vector<tl::expected<int64_t, ErrorCode>> batch_get_into_internal_ascend(
+        const std::string key,
+        const std::vector<void *> &buffers, const std::vector<size_t> &sizes);
+
     tl::expected<void, ErrorCode> put_from_internal(
         const std::string &key, void *buffer, size_t size,
         const ReplicateConfig &config = ReplicateConfig{});
 
     std::vector<tl::expected<void, ErrorCode>> batch_put_from_internal(
         const std::vector<std::string> &keys,
+        const std::vector<void *> &buffers, const std::vector<size_t> &sizes,
+        const ReplicateConfig &config = ReplicateConfig{});
+    
+    std::vector<tl::expected<void, ErrorCode>> batch_put_from_internal_ascend(
+        const std::string key,
         const std::vector<void *> &buffers, const std::vector<size_t> &sizes,
         const ReplicateConfig &config = ReplicateConfig{});
 

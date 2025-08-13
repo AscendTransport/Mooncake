@@ -25,6 +25,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif  // __cplusplus
+void *g_dev_addr;
 bool enableAscendLogging() {
     char *env = getenv("ASCEND_TRANSPORT_PRINT");
     return env != nullptr && std::string(env) == "1";
@@ -89,18 +90,51 @@ int transportMemAddOpFence(RankInfo *remote_rank_info, aclrtStream stream) {
     return 0;
 }
 
+uint64_t g_dev_read_offset = 0;
+uint64_t g_dev_write_offset = 0;
 int nonAggTransportMemTask(RankInfo *local_rank_info,
                            RankInfo *remote_rank_info, int op_code,
                            uint64_t offset, uint64_t req_len, void *local_mem,
-                           aclrtStream stream) {
+                           int mem_type, aclrtStream stream) {
+    // Check if a connection has been established with the peer, and send local
+    // information to the peer
     int ret = 0;
+    g_dev_write_offset = 0;
+    std::string key_str = inet_ntoa(remote_rank_info->hostIp) +
+                          std::to_string(remote_rank_info->devicePhyId);
+    uint64_t local_buffer = 0;
+    if (mem_type == DDR) {
+        std::string local_key = inet_ntoa(local_rank_info->hostIp) + std::to_string(local_rank_info->devicePhyId);
+        // PUT OWN OBJECT / GET OWN OBJECT
+        if (local_key == key_str) {
+            if (op_code == WRITE) {
+                ret = aclrtMemcpy(reinterpret_cast<void *>(offset), req_len, local_mem, req_len, ACL_MEMCPY_DEVICE_TO_HOST);
+                if (ret != ACL_ERROR_NONE) {
+                    LOG(ERROR) << "Failed to copy data from device to host, ret: " << ret << ", local:" << local_mem << ", dest:" << offset << ", len:" << req_len;
+                    return ret;
+                }
+                LOG(INFO) << "PUT: copy data from device to host, ret: " << ret << ", local:" << local_mem << ", dest:" << offset << ", len:" << req_len;
+                return ret;
+            }
+            ret = aclrtMemcpy(local_mem, req_len, reinterpret_cast<void *>(offset), req_len, ACL_MEMCPY_HOST_TO_DEVICE);
+            if (ret != ACL_ERROR_NONE) {
+                LOG(ERROR) << "Failed to copy data from host to device, ret: " << ret << ", local:" << offset << ", dest:" << local_mem << ", len:" << req_len;
+                return ret;
+            }
+            LOG(INFO) << "GET: copy data from host to device, ret: " << ret << ", local:" << offset << ", dest:" << local_mem << ", len:" << req_len;
+            return ret;
+        }
+        local_buffer = (uint64_t)g_dev_addr + g_dev_read_offset;
+        ret = aclrtMemcpy(reinterpret_cast<void *>(local_buffer), req_len, local_mem, req_len, ACL_MEMCPY_DEVICE_TO_DEVICE);
+        if (ret != ACL_ERROR_NONE) {
+            LOG(ERROR) << "Failed to copy data from device to device, ret: " << ret << ", local:" << local_mem << ", dest:" << local_buffer << ", len:" << req_len;
+            return ret;
+        }
+        g_dev_read_offset += req_len;
+    }
     std::shared_ptr<hccl::HcclSocket> hccl_ctrl_socket;
     std::shared_ptr<hccl::HcclSocket> hccl_data_socket;
     std::shared_ptr<hccl::TransportMem> transport_mem{};
-    // Check if a connection has been established with the peer, and send local
-    // information to the peer
-    std::string key_str = inet_ntoa(remote_rank_info->hostIp) +
-                          std::to_string(remote_rank_info->devicePhyId);
     auto iter = g_target_key_to_connection_map.find(key_str);
     if (iter == g_target_key_to_connection_map.end()) {
         ret = controlInfoSend(local_rank_info, remote_rank_info);
@@ -154,6 +188,50 @@ int nonAggTransportMemTask(RankInfo *local_rank_info,
     hccl::TransportMem::RmaOpMem remoteMem;
     remoteMem.addr = (void *)offset;
     remoteMem.size = req_len;
+    if (mem_type == DDR) {
+        int client_socket = g_target_key_to_connection_map[key_str].tcp_socket;
+        bool isRead = op_code != WRITE;
+        SingleCopyInfo copy_info;
+        copy_info.host_addr = offset;
+        copy_info.len = req_len;
+        copy_info.is_read = isRead;
+        copy_info.is_copy = isRead ? true : false;
+        copy_info.local_id = local_rank_info->devicePhyId;
+        copy_info.remote_id = remote_rank_info->devicePhyId;
+        copy_info.offset = g_dev_read_offset;
+        LOG(INFO) << "send client: " << client_socket
+                  << ", offset:" << offset
+                  << ", local_id: " << local_rank_info->devicePhyId
+                  << ", remote_id: " << remote_rank_info->devicePhyId
+                  << ", g_offset:" << copy_info.offset
+                  << ", len:" << req_len;
+        ret = send(client_socket, &copy_info, sizeof(SingleCopyInfo), 0);
+        if (ret <0) {
+            LOG(ERROR) << "send copy_info failed ret:" << ret
+                       << ", errno:" << errno
+                       << ", error:" << strerror(errno);
+            return ret;
+        }
+        LOG(INFO) << "send ok client socket: " << client_socket
+                  << ", local_id:" << local_rank_info->devicePhyId
+                  << ", remote_id:" << remote_rank_info->devicePhyId;
+        SingleCopyInfo single_copy_info;
+        ret = recv(client_socket, &single_copy_info, sizeof(SingleCopyInfo), 0);
+        if (ret <= 0) {
+            if (ret < 0) {
+                LOG(ERROR) << "recv copy_info failed ret:" << ret;
+            } else {
+                LOG(ERROR) << "recv peer close the connection, ret:" << ret;
+            }
+            return ret;
+        }
+        LOG(INFO) << "recv ok client socket: " << client_socket
+                  << ", device addr:" << single_copy_info.device_addr
+                  << ", local_id:" << local_rank_info->devicePhyId
+                  << ", remote_id:" << remote_rank_info->devicePhyId;
+        localMem.addr = (void*)local_buffer;
+        remoteMem.addr = (void*)single_copy_info.device_addr;
+    }
     if (op_code == WRITE) {
         ret = transport_mem->Write(remoteMem, localMem, stream);
         if (ret) {
@@ -177,6 +255,62 @@ int nonAggTransportMemTask(RankInfo *local_rank_info,
     return 0;
 }
 
+int transportMemIntegrate(RankInfo *local_rank_info,
+                           RankInfo *remote_rank_info, int op_code,
+                           uint64_t offset, uint64_t req_len, void *local_mem,
+                           int mem_type, aclrtStream stream) {
+    g_dev_read_offset = 0;
+    g_dev_write_offset += req_len;
+    int ret = 0;
+    uint64_t local_dev_addr = reinterpret_cast<uint64_t>(g_dev_addr);
+    if (op_code == WRITE) {
+        std::string key_str = inet_ntoa(remote_rank_info->hostIp) + std::to_string(remote_rank_info->devicePhyId);
+        int client_socket = g_target_key_to_connection_map[key_str].tcp_socket;
+        SingleCopyInfo copy_info;
+        copy_info.host_addr = offset;
+        copy_info.len = req_len;
+        copy_info.is_read = false;
+        copy_info.is_copy = true;
+        copy_info.local_id = local_rank_info->devicePhyId;
+        copy_info.remote_id =  remote_rank_info->devicePhyId;
+        copy_info.offset = g_dev_write_offset;
+        LOG(INFO) << "PUT send client: " << client_socket
+                  << ", offset:" << offset
+                  << ", local_id: " << local_rank_info->devicePhyId
+                  << ", remote_id: " << remote_rank_info->devicePhyId
+                  << ", g_offset:" << copy_info.offset
+                  << ", len:" << req_len;
+        ret = send(client_socket, &copy_info, sizeof(SingleCopyInfo), 0);
+        if (ret < 0) {
+            LOG(ERROR) << "send copy_info failed ret:" << ret
+                       << ", errno:" << errno
+                       << ", error:" << strerror(errno);
+            return ret;
+        }
+        LOG(INFO) << "PUT send ok client socket: " << client_socket
+            << ", offset:" << offset
+            << ", local_id:" << local_rank_info->devicePhyId
+            << ", remote_id:" << remote_rank_info->devicePhyId;
+        SingleCopyInfo status_info;
+        ret = recv(client_socket, &status_info, sizeof(SingleCopyInfo), 0);
+        if (ret <= 0) {
+            if (ret < 0) {
+                LOG(ERROR) << "PUT recv copy_info failed ret:" << ret;
+            } else {
+                LOG(ERROR) << "PUT recv peer close the connection, ret:" << ret;
+            }
+            return ret;
+        }
+        LOG(INFO) << "PUT recv ok client socket: " << client_socket
+            << ", device addr:" << status_info.device_addr
+            << ", offset:" << offset
+            << ", local_id:" << local_rank_info->devicePhyId
+            << ", remote_id:" << remote_rank_info->devicePhyId;
+        return 0;
+    }
+    return 0;
+}
+
 int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled) {
     // Self-built out-of-band, host socket for receiving control plane
     int ret = socketEpollWait();
@@ -187,6 +321,12 @@ int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled) {
         return ret;
     }
 
+    int recv_socket =  acceptFromTarget();
+    if (recv_socket < 0) {
+        LOG(ERROR) << "acceptFromTarget failed, recv_socket: "
+                   << recv_socket;
+        return recv_socket;
+    }
     int client_socket = acceptFromTarget();
     if (client_socket < 0) {
         LOG(ERROR) << "acceptFromTarget failed, client_socket: "
@@ -195,7 +335,7 @@ int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled) {
     }
 
     RankControlInfo remote_control_info;
-    ret = recv(client_socket, &remote_control_info, sizeof(RankControlInfo), 0);
+    ret = recv(recv_socket, &remote_control_info, sizeof(RankControlInfo), 0);
     if (ret <= 0) {
         LOG(ERROR) << "Failed to receive remote_control_info, ret: " << ret
                    << ", errno: " << errno << ", error: " << strerror(errno);
@@ -302,14 +442,20 @@ int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled) {
     }
 
     g_target_key_to_connection_map[key_str].tcp_socket = client_socket;
+    g_target_key_to_connection_map[key_str].recv_socket = recv_socket;
     g_target_key_to_connection_map[key_str].transport_mem = transport_mem;
+    struct epoll_event event;
+    event.events = EPOLLIN;
+    event.data.fd = recv_socket;
+    if (epoll_ctl(g_epoll_fd_target, EPOLL_CTL_ADD, recv_socket, &event) == -1) {
+        LOG(ERROR) << "epoll_ctl: add failed, recv_socket:" << recv_socket;
+        return -1;
+    }
     if (aggregateEnabled) {
-        struct epoll_event event;
-        event.events = EPOLLIN;
         event.data.fd = client_socket;
         if (epoll_ctl(g_epoll_fd_agg, EPOLL_CTL_ADD, client_socket, &event) ==
             -1) {
-            LOG(ERROR) << "epoll_ctl: ADD";
+            LOG(ERROR) << "epoll_ctl: ADD faield";
             return -1;
         }
     }
@@ -317,10 +463,97 @@ int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled) {
     return 0;
 }
 
-void nonAggRegLocalMem(uint64_t addr, uint64_t length) {
+int recvMemInfo(int client_socket, aclrtStream steram) {
+    int ret = 0;
+    SingleCopyInfo single_copy_info;
+    ret = recv(client_socket, &single_copy_info, sizeof(single_copy_info), 0);
+    if (ret <= 0) {
+        LOG(ERROR) << "failed to receive single_copy_info ,ret:" << ret
+                   << ", errno:" << errno
+                   << ", error: " << strerror(errno);
+        return -1;
+    }
+    LOG(INFO) << "recv host addr: " << single_copy_info.host_addr
+            << ", client_socket:" << client_socket
+            << ", local_id: " << single_copy_info.local_id
+            << ", remote_id: " << single_copy_info.remote_id
+            << ", offset:" << single_copy_info.offset
+            << ", len:" << single_copy_info.len
+            << ", is_read:" << single_copy_info.is_read;
+    uint64_t device_addr = reinterpret_cast<uint64_t>(g_dev_addr) + single_copy_info.offset;
+    if (single_copy_info.is_read) {
+        if (single_copy_info.is_copy) {
+            ret = aclrtMemcpy(reinterpret_cast<void *>(device_addr), single_copy_info.len, reinterpret_cast<void *>(single_copy_info.host_addr), single_copy_info.len, ACL_MEMCPY_HOST_TO_DEVICE);
+            if (ret != ACL_ERROR_NONE) {
+                LOG(ERROR) << "Failed to copy data from host to device, ret: " << ret << ", local:" << single_copy_info.host_addr << ", dest:" << device_addr << ", len:" << single_copy_info.len;
+                return ret;
+            }
+        }
+    } else {
+        if (single_copy_info.is_copy) {
+            ret = aclrtMemcpy(reinterpret_cast<void *>(single_copy_info.offset), single_copy_info.len, reinterpret_cast<void *>(device_addr), single_copy_info.len, ACL_MEMCPY_DEVICE_TO_HOST);
+            if (ret != ACL_ERROR_NONE) {
+                LOG(ERROR) << "Failed to copy data from device to host, ret: " << ret << ", local:" << device_addr << ", dest:" << single_copy_info.offset << ", len:" << single_copy_info.len;
+                return ret;
+            }
+        }
+    }
+    SingleCopyInfo single_copy_infos;
+    single_copy_infos.device_addr = device_addr;
+    LOG(INFO) << "semd device addr: " << single_copy_info.device_addr
+        << ", client_socket:" << client_socket
+        << ", local_id: " << single_copy_info.local_id
+        << ", remote_id: " << single_copy_info.remote_id;
+    ret = send(client_socket, &single_copy_infos, sizeof(SingleCopyInfo), 0);
+    if (ret < 0) {
+        LOG(ERROR) << "Failed to send single_copy_infos ret: " << ret 
+        << ", errno:" << errno << ", error:" << strerror(errno);
+        return ret;
+    }
+    return client_socket;
+}
+
+int transportMemTarget(aclrtStream stream) {
+    int ret = 0;
+    struct epoll_event events[MAX_EVENTS];
+    int n_events = epoll_wait(g_epoll_fd_target, events, MAX_EVENTS, -1);
+    if (n_events == -1) {
+        if (errno == EINTR) {
+            return 0;
+        } else {
+            LOG(ERROR) << "epoll_wait failed: " << strerror(errno);
+            return -1;
+        }
+    }
+    for (int i = 0; i< n_events; ++i) {
+        if (events[i].events & EPOLLIN) {
+            int fd = events[i].data.fd;
+            ret = recvMemInfo(fd, stream);
+            if (ret <= 0) {
+                if (ret == 0) {
+                    LOG(ERROR) << "epoll_wait failed: " << strerror(errno);
+                    epoll_ctl(g_epoll_fd_target, EPOLL_CTL_DEL, fd, NULL);
+                    close(fd);
+                } else {
+                    LOG(ERROR) << "failed to recv Mem info, ret: " << ret << ", errno: " << errno;
+                    if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                        epoll_ctl(g_epoll_fd_target, EPOLL_CTL_DEL, fd, NULL);
+                        close(fd);
+                    }
+                }
+            }
+        }
+    }
+}
+
+void nonAggRegLocalMem(uint64_t addr, uint64_t length, bool is_pool) {
+    if (is_pool) {
+        g_dev_addr = (void *) addr;
+    }
     MemBlock memBlock;
     memBlock.addr = addr;
     memBlock.len = length;
+    LOG(INFO) << "addr addr: " << addr << ", len:" << length << ", is_pool:" << is_pool;
 
     g_localBuffer.emplace_back(memBlock);
     return;

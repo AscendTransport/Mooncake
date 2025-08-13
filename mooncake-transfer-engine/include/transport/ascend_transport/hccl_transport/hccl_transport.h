@@ -101,6 +101,7 @@ class HcclTransport : public Transport {
         int deviceLogicId);  // Thread logic for target connection acceptance
     void aggTargetLoop(
         int deviceLogicId);  // Thread logic for target aggregation/splitting
+    void targetLoop(int deviceLogicId);
 
    private:
     bool aggregateEnabled_;
@@ -108,6 +109,7 @@ class HcclTransport : public Transport {
 
     std::thread initiatorThread_;
     std::thread targetAcceptThread_;
+    std::thread targetThread_;
 
     std::thread aggInitiatorThread_;
     std::thread aggInitiatorTransferThread_;

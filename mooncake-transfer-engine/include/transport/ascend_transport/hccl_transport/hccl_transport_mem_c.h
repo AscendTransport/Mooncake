@@ -25,6 +25,8 @@ extern "C" {
 
 #define READ 0
 #define WRITE 1
+#define DDR 0
+#define HBM 1
 #define VECTOR_RESERVE_SIZE 200
 #define TOTAL_AGG_DEV_SIZE 0x2000000
 #define PER_HUGE_BUFFER_SIZE 0x800000
@@ -37,14 +39,18 @@ extern int initTransportMem(RankInfo *local_rank_info, bool aggregateEnabled);
 extern int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled);
 
 /* Non-Aggregated External Interface */
-extern void nonAggRegLocalMem(uint64_t addr, uint64_t length);
+extern void nonAggRegLocalMem(uint64_t addr, uint64_t length, bool is_pool);
 extern int nonAggTransportMemTask(RankInfo *local_rank_info,
                                   RankInfo *remote_rank_info, int op_code,
                                   uint64_t offset, uint64_t req_len,
-                                  void *local_mem, aclrtStream stream);
+                                  void *local_mem, int mem_type, aclrtStream stream);
 extern int transportMemAddOpFence(RankInfo *remote_rank_info,
                                   aclrtStream stream);
-
+extern int transportMemIntegrate(RankInfo *local_rank_info,
+                                 RankInfo *remote_rank_info, int op_code,
+                                 uint64_t offset, uint64_t req_len,
+                                 void *local_mem, int mem_type, aclrtStream stream);
+extern int transportMemTarget(aclrtStream steram);
 #ifdef __cplusplus
 }
 #endif  // __cplusplus
