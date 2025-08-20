@@ -479,11 +479,25 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
     int ret = 0;
     int opcode, mem_num;
 
-    if (recv(client_socket, &mem_num, sizeof(mem_num), MSG_WAITALL) !=
-        sizeof(mem_num)) {
-        LOG(ERROR) << "Failed to receive mem_num, ret: " << ret
-                   << ", errno: " << errno << ", error: " << strerror(errno);
-        return -1;
+    size_t total_received = 0;
+    size_t remaining = sizeof(mem_num);
+    char *buffer = reinterpret_cast<char*>(&mem_num);
+    while (remaining > 0) {
+        ssize_t ret = recv(client_socket, buffer + total_received, remaining, 0);
+        if (ret < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            LOG(ERROR) << "Failed to receive mem_num, errno: " << errno
+                    << ", error: " << strerror(errno);
+            return -1;
+        } else if (ret == 0) {
+            LOG(ERROR) << "Connection closed by peer while receiving mem_num" << strerror(errno);
+            return -1;
+        }
+
+        total_received += ret;
+        remaining -= ret;
     }
 
     uint64_t total_len =

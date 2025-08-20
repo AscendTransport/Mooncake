@@ -37,6 +37,8 @@ int initTransportMem(RankInfo *local_rank_info, bool aggregateEnabled) {
         return -1;
     }
 
+    g_target_key_to_connection_map.clear();
+
     uint32_t devPid;
     ret = SalGetBareTgid(reinterpret_cast<uint32_t *>(&devPid));
     if (ret) {
@@ -114,11 +116,11 @@ int nonAggTransportMemTask(RankInfo *local_rank_info,
             is_cross_hccs = false;
         } else {
             bool same_host =
-            local_rank_info->hostIp.s_addr == remote_control_info.hostIp.s_addr;
+            local_rank_info->hostIp.s_addr == remote_rank_info->hostIp.s_addr;
             // For A2 series, internal communication among 8 cards does not cross HCCS,
             // such as communication among cards 0-7
             bool same_group = (local_rank_info->devicePhyId / 8) ==
-                            (remote_control_info.devicePhyId / 8);
+                            (remote_rank_info->devicePhyId / 8);
             is_cross_hccs = !(same_host && same_group);
         }
         if (enableAscendLogging()) {
