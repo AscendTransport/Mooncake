@@ -40,30 +40,35 @@
 #include "transport_pub.h"
 #include "hccl_mem.h"
 #include "hccl_mem_defs.h"
+#include "runtime/dev.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif  // __cplusplus
 
 struct RankInfo {
+    char hostIp[128];
+    char deviceIp[128];
+    char vnicIp[128];
     uint64_t rankId = 0xFFFFFFFF;
-    uint64_t serverIdx;
-    struct in_addr hostIp;
     uint64_t hostPort;
-    uint64_t deviceLogicId;
-    uint64_t devicePhyId;
     DevType deviceType{DevType::DEV_TYPE_NOSOC};
-    struct in_addr deviceIp;
     uint64_t devicePort;
-    uint64_t pid;
+    uint32_t devPid;
+    int64_t sdid = 0xFFFFFFFF;
+    uint32_t serverId = 0;
+    uint32_t deviceLogicId;
+    uint32_t devicePhyId;
 };
 
 struct RankControlInfo {
-    uint64_t deviceLogicId;
-    uint64_t devicePhyId;
-    struct in_addr hostIp;
-    struct in_addr deviceIp;
-    uint64_t pid;
+    char hostIp[128];
+    char deviceIp[128];
+    char vnicIp[128];
+    uint32_t devPid;
+    int64_t sdid;
+    uint32_t deviceLogicId;
+    uint32_t devicePhyId;
 };
 
 struct MergeMem {
@@ -107,7 +112,9 @@ extern int transportMemAccept(RankInfo *local_rank_info);
 
 extern int regLocalRmaMem(void *addr, uint64_t length);
 
-extern bool printEnabled();
+extern bool ascendPrintEnabled();
+
+extern bool a3Enabled();
 
 extern int transportMemAddOpFence(RankInfo *remote_rank_info,
                                   aclrtStream stream);

@@ -90,7 +90,7 @@ class HcclTransport : public Transport {
                                         std::string &ip, int &ip_port,
                                         int &devicePhyId);
 
-    int rankInfoParse(int devicePhyId, std::string hostIp);
+    int devInfoParse(std::string hostIp);
 
    private:
     std::atomic_bool running_;

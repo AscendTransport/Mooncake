@@ -31,6 +31,7 @@ HcclTransport::HcclTransport() : running_(-1) {
 HcclTransport::~HcclTransport() {
     if (running_) {
         running_ = false;
+        initiator_cond_.notify_all();
 
         for (size_t i = 0; i < THREAD_NUM; ++i) {
             allInitiatorThreads_[i].join();
@@ -55,8 +56,12 @@ void HcclTransport::initiatorLoop(int deviceLogicId, int selfIdx) {
     while (running_) {
         auto waitlock = std::chrono::high_resolution_clock::now();
         std::unique_lock<std::mutex> lock(initiator_mutex_);
-        if (allReqQueues_[selfIdx].empty()) {
-            initiator_cond_.wait(lock);
+        initiator_cond_.wait(lock, [this, selfIdx]() {
+            return !allReqQueues_[selfIdx].empty() || !running_;
+        });
+
+        if (!running_) {
+            break;
         }
         auto start = std::chrono::high_resolution_clock::now();
         auto slice_list = std::move(allReqQueues_[selfIdx].front());
@@ -78,16 +83,25 @@ void HcclTransport::initiatorLoop(int deviceLogicId, int selfIdx) {
         }
 
         remote_rank_info_.rankId = segment_desc->rank_info.rankId;
-        inet_pton(AF_INET, segment_desc->rank_info.hostIp.c_str(),
-                  &remote_rank_info_.hostIp);
         remote_rank_info_.hostPort = segment_desc->rank_info.hostPort;
         remote_rank_info_.deviceLogicId = segment_desc->rank_info.deviceLogicId;
         remote_rank_info_.devicePhyId = segment_desc->rank_info.devicePhyId;
-        inet_pton(AF_INET, segment_desc->rank_info.deviceIp.c_str(),
-                  &remote_rank_info_.deviceIp);
         remote_rank_info_.devicePort = segment_desc->rank_info.devicePort;
-        remote_rank_info_.serverIdx = 0;
-        remote_rank_info_.pid = segment_desc->rank_info.pid;
+        remote_rank_info_.serverId = segment_desc->rank_info.serverId;
+        remote_rank_info_.devPid = segment_desc->rank_info.devPid;
+        remote_rank_info_.sdid = segment_desc->rank_info.sdid;
+
+        strncpy(remote_rank_info_.hostIp,
+                segment_desc->rank_info.hostIp.c_str(), 127);
+        remote_rank_info_.hostIp[127] = '\0';
+
+        strncpy(remote_rank_info_.deviceIp,
+                segment_desc->rank_info.deviceIp.c_str(), 127);
+        remote_rank_info_.deviceIp[127] = '\0';
+
+        strncpy(remote_rank_info_.vnicIp,
+                segment_desc->rank_info.vnicIp.c_str(), 127);
+        remote_rank_info_.vnicIp[127] = '\0';
 
         for (auto slice : slice_list) {
             ret = transportMemTask(&local_rank_info_, &remote_rank_info_,
@@ -137,7 +151,7 @@ void HcclTransport::initiatorLoop(int deviceLogicId, int selfIdx) {
             }
         }
         auto stop = std::chrono::high_resolution_clock::now();
-        if (printEnabled()) {
+        if (ascendPrintEnabled()) {
             pid_t pid = getpid();
             auto duration_wait =
                 std::chrono::duration_cast<std::chrono::milliseconds>(start -
@@ -256,97 +270,37 @@ int HcclTransport::getDevIdAndIpPortFromServerName(std::string &identifier,
     return 0;
 }
 
-int HcclTransport::rankInfoParse(int devicePhyId, std::string hostIp) {
-    int ret = 0;
+int HcclTransport::devInfoParse(std::string hostIp) {
     int deviceLogicId = 0;
-    ret = aclrtGetDevice(&deviceLogicId);
+    int ret = aclrtGetDevice(&deviceLogicId);
     if (ret) {
         LOG(ERROR) << "HcclTransport: aclrtGetDevice failed, ret: " << ret;
         return ret;
     }
+    local_rank_info_.deviceLogicId = (uint32_t)deviceLogicId;
 
-    // Default configuration file path for HCCL
-    std::ifstream fin("/etc/hccn.conf");
-    if (!fin) {
-        LOG(ERROR) << "can't open conf 文件：/etc/hccn.conf";
-        return -1;
-    }
+    local_rank_info_.rankId = local_rank_info_.deviceLogicId;
 
-    std::string line;
-    while (std::getline(fin, line)) {
-        if (line.rfind("address_", 0) == 0) {
-            size_t equal_pos = line.find('=');
-            if (equal_pos != std::string::npos) {
-                std::string key = line.substr(8, equal_pos - 8);
-                key.erase(key.begin(), std::find_if(key.begin(), key.end(),
-                                                    [](unsigned char c) {
-                                                        return !std::isspace(c);
-                                                    }));
-                if (key == std::to_string(devicePhyId)) {
-                    std::string deviceIp = line.substr(equal_pos + 1);
-                    deviceIp.erase(
-                        deviceIp.begin(),
-                        std::find_if(
-                            deviceIp.begin(), deviceIp.end(),
-                            [](unsigned char c) { return !std::isspace(c); }));
-                    deviceIp.erase(
-                        std::find_if(
-                            deviceIp.rbegin(), deviceIp.rend(),
-                            [](unsigned char c) { return !std::isspace(c); })
-                            .base(),
-                        deviceIp.end());
+    strncpy(local_rank_info_.hostIp, hostIp.c_str(), 127);
+    local_rank_info_.hostIp[127] = '\0';
 
-                    if (inet_pton(AF_INET, hostIp.c_str(),
-                                  &local_rank_info_.hostIp) != 1) {
-                        LOG(ERROR) << "HcclTransport: Invalid Host IP format: "
-                                   << hostIp;
-                        return -1;
-                    }
-                    local_rank_info_.rankId = devicePhyId;
-                    local_rank_info_.serverIdx = 0;
-                    local_rank_info_.devicePhyId = devicePhyId;
-                    local_rank_info_.hostPort =
-                        ASCEND_DEFAULT_HOST_PORT + devicePhyId;
-                    local_rank_info_.deviceLogicId = deviceLogicId;
-                    local_rank_info_.devicePort = ASCEND_DEFAULT_DEVICE_PORT;
-                    local_rank_info_.pid = 0;
-                    if (inet_pton(AF_INET, deviceIp.c_str(),
-                                  &local_rank_info_.deviceIp) != 1) {
-                        LOG(ERROR)
-                            << "HcclTransport: Invalid Device IP format: "
-                            << deviceIp;
-                        return -1;
-                    }
-                    LOG(INFO)
-                        << "rankInfoParse Success, hostIp: " << hostIp
-                        << ", rankId: " << local_rank_info_.rankId
-                        << ", serverIdx: " << local_rank_info_.serverIdx
-                        << ", devicePhyId: " << local_rank_info_.devicePhyId
-                        << ", hostPort: " << local_rank_info_.hostPort
-                        << ", deviceLogicId: " << local_rank_info_.deviceLogicId
-                        << ", devicePort: " << local_rank_info_.devicePort
-                        << ", deviceIp: " << deviceIp
-                        << ", device pid: " << local_rank_info_.pid;
-                    // Exit after finishing rankInfoParse
-                    return 0;
-                }
-            }
-        }
-    }
-    // Not Found
-    return -1;
+    local_rank_info_.devicePort = ASCEND_DEFAULT_DEVICE_PORT;
+
+    local_rank_info_.hostPort =
+        ASCEND_DEFAULT_HOST_PORT + local_rank_info_.devicePhyId;
+
+    return 0;
 }
 
 int HcclTransport::install(std::string &local_server_name,
                            std::shared_ptr<TransferMetadata> meta,
                            std::shared_ptr<Topology> topo) {
-    int ret = 0;
     int port;
     std::string hostIp;
     int devicePhyId;
     metadata_ = meta;
-    ret = getDevIdAndIpPortFromServerName(local_server_name, hostIp, port,
-                                          devicePhyId);
+    int ret = getDevIdAndIpPortFromServerName(local_server_name, hostIp, port,
+                                              devicePhyId);
     if (ret) {
         LOG(ERROR)
             << "HcclTransport: getDevIdAndIpPortFromServerName failed, ret: "
@@ -360,9 +314,9 @@ int HcclTransport::install(std::string &local_server_name,
         << devicePhyId << ", local_server_name: " << local_server_name;
 
     // add to local_rank_info_
-    ret = rankInfoParse(devicePhyId, hostIp);
+    ret = devInfoParse(hostIp);
     if (ret) {
-        LOG(ERROR) << "HcclTransport: rankInfoParse failed, ret: " << ret;
+        LOG(ERROR) << "HcclTransport: devInfoParse failed, ret: " << ret;
         return ret;
     }
 
@@ -532,13 +486,16 @@ int HcclTransport::allocateLocalSegmentID() {
     desc->name = local_server_name_;
     desc->protocol = "ascend";
     desc->rank_info.rankId = local_rank_info_.rankId;
-    desc->rank_info.hostIp = inet_ntoa(local_rank_info_.hostIp);
+    desc->rank_info.hostIp = local_rank_info_.hostIp;
     desc->rank_info.hostPort = local_rank_info_.hostPort;
     desc->rank_info.deviceLogicId = local_rank_info_.deviceLogicId;
     desc->rank_info.devicePhyId = local_rank_info_.devicePhyId;
-    desc->rank_info.deviceIp = inet_ntoa(local_rank_info_.deviceIp);
+    desc->rank_info.deviceIp = local_rank_info_.deviceIp;
     desc->rank_info.devicePort = local_rank_info_.devicePort;
-    desc->rank_info.pid = local_rank_info_.pid;
+    desc->rank_info.devPid = local_rank_info_.devPid;
+    desc->rank_info.sdid = local_rank_info_.sdid;
+    desc->rank_info.serverId = local_rank_info_.serverId;
+    desc->rank_info.vnicIp = local_rank_info_.vnicIp;
 
     metadata_->addLocalSegment(LOCAL_SEGMENT_ID, local_server_name_,
                                std::move(desc));
