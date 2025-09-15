@@ -104,7 +104,8 @@ int nonAggTransportMemTask(RankInfo *local_rank_info,
     std::string key_str = inet_ntoa(remote_rank_info->hostIp) +
                           std::to_string(remote_rank_info->devicePhyId);
     auto iter = g_target_key_to_connection_map.find(key_str);
-    if (iter == g_target_key_to_connection_map.end()) {
+    if (iter == g_target_key_to_connection_map.end() ||
+        g_target_key_to_connection_map[key_str].tcp_socket == 0) {
         ret = controlInfoSend(local_rank_info, remote_rank_info);
         if (ret) {
             LOG(ERROR) << "controlInfoSend failed, ret: " << ret;
@@ -115,12 +116,12 @@ int nonAggTransportMemTask(RankInfo *local_rank_info,
         if (enableA3 != nullptr && std::string(enableA3) == "1") {
             is_cross_hccs = false;
         } else {
-            bool same_host =
-            local_rank_info->hostIp.s_addr == remote_rank_info->hostIp.s_addr;
-            // For A2 series, internal communication among 8 cards does not cross HCCS,
-            // such as communication among cards 0-7
+            bool same_host = local_rank_info->hostIp.s_addr ==
+                             remote_rank_info->hostIp.s_addr;
+            // For A2 series, internal communication among 8 cards does not
+            // cross HCCS, such as communication among cards 0-7
             bool same_group = (local_rank_info->devicePhyId / 8) ==
-                            (remote_rank_info->devicePhyId / 8);
+                              (remote_rank_info->devicePhyId / 8);
             is_cross_hccs = !(same_host && same_group);
         }
         if (enableAscendLogging()) {
@@ -239,11 +240,11 @@ int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled) {
         is_cross_hccs = false;
     } else {
         bool same_host =
-        local_rank_info->hostIp.s_addr == remote_control_info.hostIp.s_addr;
-        // For A2 series, internal communication among 8 cards does not cross HCCS,
-        // such as communication among cards 0-7
+            local_rank_info->hostIp.s_addr == remote_control_info.hostIp.s_addr;
+        // For A2 series, internal communication among 8 cards does not cross
+        // HCCS, such as communication among cards 0-7
         bool same_group = (local_rank_info->devicePhyId / 8) ==
-                        (remote_control_info.devicePhyId / 8);
+                          (remote_control_info.devicePhyId / 8);
         is_cross_hccs = !(same_host && same_group);
     }
 

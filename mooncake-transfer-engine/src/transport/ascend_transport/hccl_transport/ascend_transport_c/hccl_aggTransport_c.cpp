@@ -81,7 +81,8 @@ static int sendMemInfo(int client_socket, const std::vector<MemBlock> &memPool,
         int ret = sendmsg(client_socket, &msg, MSG_NOSIGNAL);
         if (ret < 0) {
             if (errno == EINTR) continue;
-            LOG(ERROR) << "sendmsg failed: " << strerror(errno);
+            LOG(ERROR) << "sendmsg failed: " << strerror(errno)
+                       << ", client_socket: " << client_socket;
             return -1;
         }
         already_sent += static_cast<int>(ret);
@@ -258,7 +259,7 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
     std::string key_str = inet_ntoa(remote_rank_info->hostIp) +
                           std::to_string(remote_rank_info->devicePhyId);
     auto iter = g_target_key_to_connection_map.find(key_str);
-    if (iter == g_target_key_to_connection_map.end()) {
+    if (iter == g_target_key_to_connection_map.end() || g_target_key_to_connection_map[key_str].tcp_socket <= 0) {
         ret = controlInfoSend(local_rank_info, remote_rank_info);
         if (ret) {
             LOG(ERROR) << "controlInfoSend failed, ret: " << ret;
@@ -394,8 +395,7 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
         lock.unlock();
         g_transfer_cond.notify_one();
         mergeLen = 0;
-        g_hugeBufferIdx =
-            (g_hugeBufferIdx + 1) % HUGE_BUFFER_NUM;
+        g_hugeBufferIdx = (g_hugeBufferIdx + 1) % HUGE_BUFFER_NUM;
     }
 
     if (opcode == READ) {
@@ -481,18 +481,20 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
 
     size_t total_received = 0;
     size_t remaining = sizeof(mem_num);
-    char *buffer = reinterpret_cast<char*>(&mem_num);
+    char *buffer = reinterpret_cast<char *>(&mem_num);
     while (remaining > 0) {
-        ssize_t ret = recv(client_socket, buffer + total_received, remaining, 0);
+        ssize_t ret =
+            recv(client_socket, buffer + total_received, remaining, 0);
         if (ret < 0) {
             if (errno == EINTR) {
                 continue;
             }
             LOG(ERROR) << "Failed to receive mem_num, errno: " << errno
-                    << ", error: " << strerror(errno);
+                       << ", error: " << strerror(errno);
             return -1;
         } else if (ret == 0) {
-            LOG(ERROR) << "Connection closed by peer while receiving mem_num" << strerror(errno);
+            LOG(ERROR) << "Connection closed by peer while receiving mem_num"
+                       << strerror(errno);
             return -1;
         }
 
@@ -630,8 +632,7 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
                 return ret;
             }
         }
-        g_hugeBufferIdx =
-            (g_hugeBufferIdx + 1) % HUGE_BUFFER_NUM;
+        g_hugeBufferIdx = (g_hugeBufferIdx + 1) % HUGE_BUFFER_NUM;
     }
 
     if (opcode == WRITE) {
@@ -699,7 +700,7 @@ int aggTransportMemTarget(aclrtStream stream) {
 
 void aggRegLocalMem(uint64_t addr, uint64_t length, bool isAggBuffer) {
     const uint64_t alignment = 1 << 21;
-    if (addr & (alignment - 1) != 0) {
+    if ((addr & (alignment - 1)) != 0) {
         return;
     }
 

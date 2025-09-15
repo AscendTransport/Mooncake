@@ -429,7 +429,7 @@ int HcclTransport::install(std::string &local_server_name,
         }
 
         const uint64_t alignment = 1 << 21;
-        if ((uint64_t)devAddr & (alignment - 1) != 0) {
+        if (((uint64_t)devAddr & (alignment - 1)) != 0) {
             LOG(ERROR) << "The Merge malloc address is not 2M aligned.";
             return -1;
         }
