@@ -673,6 +673,11 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
         uint64_t mergeLen = 0;
         void *mergeAddr =
             (void *)g_localHugeBuffer[g_hugeBufferIdx]->memBlock.addr;
+        
+        while (!g_localHugeBuffer[g_hugeBufferIdx]->freed.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+        g_localHugeBuffer[g_hugeBufferIdx]->freed.store(false, std::memory_order_release);
         if (opcode == READ) {
             while (mergeLen < g_aggBlockSize &&
                    (idx < receivedMemPool.size())) {
@@ -794,6 +799,13 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
         }
         g_hugeBufferIdx =
             (g_hugeBufferIdx + 1) % HUGE_BUFFER_NUM;
+
+        ret = g_localHugeBuffer[g_hugeBufferIdx]->freed.load(std::memory_order_acquire);
+        if (ret) {
+            LOG(ERROR) << "Error: Object at index " << g_hugeBufferIdx << " has been freed!";
+            return ret;
+        }
+        g_localHugeBuffer[g_hugeBufferIdx]->freed.store(true, std::memory_order_release);  
     }
 
     if (opcode == WRITE) {
