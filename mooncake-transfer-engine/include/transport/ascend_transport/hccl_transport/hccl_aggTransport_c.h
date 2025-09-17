@@ -40,8 +40,6 @@ struct transferReq {
 };
 
 /* Aggregated External Interface */
-extern int directTransfer(RankInfo *remote_rank_info, void *local_addr,
-                          void *remote_addr, uint64_t len, int opcode);
 extern int aggTransportMemTask(RankInfo *local_rank_info,
                                RankInfo *remote_rank_info,
                                std::vector<MemBlock> &local_memPool,
@@ -49,7 +47,6 @@ extern int aggTransportMemTask(RankInfo *local_rank_info,
                                int opcode, aclrtStream stream, int mem_type);
 extern int aggTransportMemTransfer(aclrtStream stream);
 extern int aggTransportMemTarget(aclrtStream stream);
-extern void setAggBlockSize();
 extern void aggRegLocalMem(uint64_t addr, uint64_t length, bool isAggBuffer);
 
 #ifdef __cplusplus
