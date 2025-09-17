@@ -37,7 +37,6 @@ std::vector<std::unique_ptr<HugeBuffer>> g_localHugeBuffer;
 std::vector<uint64_t> g_localMemtoSend;
 
 int g_hugeBufferIdx = 0;
-uint64_t g_aggBlockSize = 0;
 
 static int sendMemInfo(int client_socket, const std::vector<MemBlock> &memPool,
                        int opcode) {
@@ -203,49 +202,6 @@ int aggTransportMemTransfer(aclrtStream stream) {
     return 0;
 }
 
-int directTransfer(RankInfo *remote_rank_info, void *local_addr,
-                   void *remote_addr, uint64_t len, int opcode) {
-    std::string key_str = inet_ntoa(remote_rank_info->hostIp) +
-                          std::to_string(remote_rank_info->devicePhyId);
-    auto req = std::make_shared<transferReq>();
-    req->local_addr = local_addr;
-    req->remote_addr = remote_addr;
-    req->len = len;
-    req->opcode = opcode;
-    req->isMerge = 0;
-    req->key_str = key_str;
-
-    std::unique_lock<std::mutex> lock(g_transfer_mutex);
-    g_transferReqList.push(req);
-    lock.unlock();
-    g_transfer_cond.notify_one();
-
-    return 0;
-}
-
-// The function can set the environment variable AGG_BLOCK_SIZE.
-void setAggBlockSize() {
-    const char *env_size = getenv("AGG_BLOCK_SIZE");
-
-    if (env_size != NULL) {
-        int env_value = atoi(env_size);
-
-        if (env_value <= 2) {
-            g_aggBlockSize = 2 * 1024 * 1024;
-        } else if (env_value <= 4) {
-            g_aggBlockSize = 4 * 1024 * 1024;
-        } else if (env_value <= 6) {
-            g_aggBlockSize = 6 * 1024 * 1024;
-        } else {
-            g_aggBlockSize = 8 * 1024 * 1024;
-        }
-    } else {
-        g_aggBlockSize = 8 * 1024 * 1024;
-    }
-
-    g_aggBlockSize -= RESERVED_MEMORY_SIZE;
-}
-
 int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
                         std::vector<MemBlock> &local_memPool,
                         std::vector<MemBlock> &remote_memPool, int opcode,
@@ -259,7 +215,8 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
     std::string key_str = inet_ntoa(remote_rank_info->hostIp) +
                           std::to_string(remote_rank_info->devicePhyId);
     auto iter = g_target_key_to_connection_map.find(key_str);
-    if (iter == g_target_key_to_connection_map.end() || g_target_key_to_connection_map[key_str].tcp_socket <= 0) {
+    if (iter == g_target_key_to_connection_map.end() ||
+        g_target_key_to_connection_map[key_str].tcp_socket <= 0) {
         ret = controlInfoSend(local_rank_info, remote_rank_info);
         if (ret) {
             LOG(ERROR) << "controlInfoSend failed, ret: " << ret;
@@ -339,7 +296,6 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
     uint64_t idx = 0;
     while (idx < local_memPool.size()) {
         uint64_t mergeLen = 0;
-        const MemBlock &localMem = local_memPool[idx];
         if (opcode == WRITE) {
             while (!g_localHugeBuffer[g_hugeBufferIdx]->freed.load(
                 std::memory_order_acquire)) {
@@ -352,7 +308,11 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
 
         void *mergeAddr =
             (void *)g_localHugeBuffer[g_hugeBufferIdx]->memBlock.addr;
-        while (mergeLen < g_aggBlockSize && (idx < local_memPool.size())) {
+        while (idx < local_memPool.size()) {
+            const MemBlock &localMem = local_memPool[idx];
+            if (mergeLen + localMem.len > PER_HUGE_BUFFER_SIZE) {
+                break;
+            }
             if (opcode == WRITE) {
                 ret = aclrtMemcpyAsync(mergeAddr, localMem.len,
                                        (void *)localMem.addr, localMem.len,
@@ -394,7 +354,6 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
         g_transferReqList.push(req);
         lock.unlock();
         g_transfer_cond.notify_one();
-        mergeLen = 0;
         g_hugeBufferIdx = (g_hugeBufferIdx + 1) % HUGE_BUFFER_NUM;
     }
 
@@ -412,8 +371,11 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
                 (void *)g_localHugeBuffer[mergeIdx]->memBlock.addr;
             lock.unlock();
             uint64_t mergeLen = 0;
-            while (mergeLen < g_aggBlockSize && (idx < local_memPool.size())) {
+            while (idx < local_memPool.size()) {
                 const MemBlock &localMem = local_memPool[idx];
+                if (mergeLen + localMem.len > PER_HUGE_BUFFER_SIZE) {
+                    break;
+                }
                 ret = aclrtMemcpyAsync((void *)localMem.addr, localMem.len,
                                        mergeAddr, localMem.len,
                                        ACL_MEMCPY_DEVICE_TO_DEVICE, stream);
@@ -432,8 +394,6 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
                 LOG(ERROR) << "Failed to aclrtSynchronizeStream, ret: " << ret;
                 return ret;
             }
-
-            mergeLen = 0;
 
             ret = g_localHugeBuffer[mergeIdx]->freed.load(
                 std::memory_order_acquire);
@@ -542,8 +502,6 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
         }
     }
 
-    setAggBlockSize();
-
     g_hugeBufferIdx = 0;
     if (opcode == WRITE) {
         struct iovec iov[1];
@@ -570,9 +528,11 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
         void *mergeAddr =
             (void *)g_localHugeBuffer[g_hugeBufferIdx]->memBlock.addr;
         if (opcode == READ) {
-            while (mergeLen < g_aggBlockSize &&
-                   (idx < receivedMemPool.size())) {
+            while (idx < receivedMemPool.size()) {
                 auto &block = receivedMemPool[idx];
+                if (mergeLen + block.len > PER_HUGE_BUFFER_SIZE) {
+                    break;
+                }
                 ret = aclrtMemcpyAsync(mergeAddr, block.len, (void *)block.addr,
                                        block.len, ACL_MEMCPY_DEVICE_TO_DEVICE,
                                        stream);
@@ -609,9 +569,11 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
                 return ret;
             }
 
-            while (mergeLen < g_aggBlockSize &&
-                   (idx < receivedMemPool.size())) {
+            while (idx < receivedMemPool.size()) {
                 auto &block = receivedMemPool[idx];
+                if (mergeLen + block.len > PER_HUGE_BUFFER_SIZE) {
+                    break;
+                }
                 ret = aclrtMemcpyAsync((void *)block.addr, block.len, mergeAddr,
                                        block.len, ACL_MEMCPY_DEVICE_TO_DEVICE,
                                        stream);

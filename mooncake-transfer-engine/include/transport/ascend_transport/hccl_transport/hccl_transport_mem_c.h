@@ -29,7 +29,8 @@ extern "C" {
 #define TOTAL_AGG_DEV_SIZE 0x2000000
 #define PER_HUGE_BUFFER_SIZE 0x800000
 #define HUGE_BUFFER_NUM 4
-#define RESERVED_MEMORY_SIZE 0x40000
+// Critical size for data block aggregation: 256KB (256 * 1024 bytes)
+#define BLOCK_AGGREGATION_THRESHOLD 0x40000
 
 /* Public External Interface */
 extern bool enableAscendLogging();
