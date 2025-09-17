@@ -19,6 +19,7 @@
 #include <unistd.h>
 #include <cstdlib>
 #include <string>
+#include <algorithm>
 #include "transport/ascend_transport/hccl_transport/hccl_transport.h"
 
 namespace mooncake {
@@ -36,34 +37,17 @@ int HcclTransport::aggTransport(std::vector<Slice *> &slice_list,
     localMemPool.reserve(slice_list.size());
     remoteMemPool.reserve(slice_list.size());
 
-    setAggBlockSize();
     // auto m2 = std::chrono::high_resolution_clock::now();
     for (auto slice : slice_list) {
-        MemBlock local_mem;
-        MemBlock remote_mem;
-        if (slice->length > RESERVED_MEMORY_SIZE) {
-            ret = directTransfer(&remote_rank_info_, slice->source_addr,
-                                 (void *)slice->hccl.dest_addr, slice->length,
-                                 slice->opcode);
-            if (ret) {
-                LOG(ERROR) << "HcclTransport: directTransfer error, local "
-                              "devicePhyId: "
-                           << local_rank_info_.devicePhyId
-                           << ", remote devicePhyId: "
-                           << remote_rank_info_.devicePhyId << ", ret: " << ret;
-                return ret;
-            }
-        } else {
-            localMemPool.emplace_back(
-                reinterpret_cast<uint64_t>(slice->source_addr), slice->length, slice->hccl.dest_addr_type);
-            remoteMemPool.emplace_back(slice->hccl.dest_addr, slice->length, slice->hccl.dest_addr_type);
-        }
+        localMemPool.emplace_back(
+            reinterpret_cast<uint64_t>(slice->source_addr), slice->length);
+        remoteMemPool.emplace_back(slice->hccl.dest_addr, slice->length);
     }
     // auto m3 = std::chrono::high_resolution_clock::now();
 
-    ret =
-        aggTransportMemTask(&local_rank_info_, &remote_rank_info_, localMemPool,
-                            remoteMemPool, slice_list[0]->opcode, stream, slice_list[0]->hccl.dest_addr_type);
+    ret = aggTransportMemTask(
+        &local_rank_info_, &remote_rank_info_, localMemPool, remoteMemPool,
+        slice_list[0]->opcode, stream, slice_list[0]->hccl.dest_addr_type);
     if (ret) {
         LOG(ERROR)
             << "HcclTransport: aggTransportMemTask error, local devicePhyId: "
@@ -134,17 +118,33 @@ void HcclTransport::aggInitiatorLoop(int deviceLogicId) {
 
     while (running_) {
         std::unique_lock<std::mutex> lock(initiator_mutex_);
-        if (allReqQueues_.empty()) {
-            initiator_cond_.wait(lock);
-        }
+        initiator_cond_.wait(
+            lock, [this] { return !allReqQueues_.empty() || !running_; });
         auto slice_list = std::move(allReqQueues_.front());
         allReqQueues_.pop();
         lock.unlock();
         if (slice_list.empty()) {
             LOG(ERROR) << "HcclTransport: empty transfer request batch";
         }
+        bool isAgg = true;
+        if (slice_list[0]->hccl.dest_addr_type == HBM) {
+            size_t minLen = slice_list[0]->length;
+            size_t maxLen = slice_list[0]->length;
+            for (auto slice : slice_list) {
+                minLen = std::min(minLen, slice->length);
+                maxLen = std::max(maxLen, slice->length);
+                if (maxLen > PER_HUGE_BUFFER_SIZE) {
+                    isAgg = false;
+                    break;
+                }
+            }
 
-        if (slice_list[0]->length > RESERVED_MEMORY_SIZE) {
+            if (minLen > BLOCK_AGGREGATION_THRESHOLD) {
+                isAgg = false;
+            }
+        }
+
+        if (!isAgg) {
             ret = nonAggTransport(slice_list, stream);
             if (ret) {
                 LOG(ERROR) << "HcclTransport: nonAggTransport error, ret: "

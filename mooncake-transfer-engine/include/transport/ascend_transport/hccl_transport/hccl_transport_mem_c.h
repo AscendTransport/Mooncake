@@ -44,10 +44,11 @@ extern void nonAggRegLocalMem(uint64_t addr, uint64_t length, bool is_pool);
 extern int nonAggTransportMemTask(RankInfo *local_rank_info,
                                   RankInfo *remote_rank_info, int op_code,
                                   uint64_t offset, uint64_t req_len,
-                                  void *local_mem, int mem_type, aclrtStream stream);
+                                  void *local_mem, int mem_type,
+                                  aclrtStream stream);
 extern int transportMemAddOpFence(RankInfo *remote_rank_info,
                                   aclrtStream stream);
-extern int transportMemIntegrate(RankInfo *local_rank_info, 
+extern int transportMemIntegrate(RankInfo *local_rank_info,
                                  RankInfo *remote_rank_info, int op_code,
                                  uint64_t offset, uint64_t req_len,
                                  void *local_mem, aclrtStream stream);
