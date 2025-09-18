@@ -21,6 +21,7 @@
 #include <sys/socket.h>
 #include "mpi.h"
 #include "transport/ascend_transport/hccl_transport/hccl_transport_mem_c.h"
+#include "transport/ascend_transport/hccl_transport/hccl_transport_mem_internals.h"
 
 #include <iomanip>
 #include <cstdint>
@@ -87,8 +88,10 @@ int initTransportMem(RankInfo *local_rank_info, bool aggregateEnabled) {
 int transportMemAddOpFence(RankInfo *remote_rank_info, aclrtStream stream) {
     std::string key_str = std::string(inet_ntoa(remote_rank_info->hostIp)) + '-' +
                           std::to_string(remote_rank_info->devicePhyId);
+    // g_map_mtx.lock(); // 手动加锁
     int ret = g_target_key_to_connection_map[key_str].transport_mem->AddOpFence(
         stream);
+    // g_map_mtx.unlock();
     if (ret) {
         LOG(ERROR) << "transport_mem AddOpFence failed, ret: " << ret;
         return ret;
@@ -286,7 +289,7 @@ int nonAggTransportMemTask(RankInfo *local_rank_info,
                 << ", remote_id:" << remote_rank_info->devicePhyId;
         
         SingleCopyInfo single_copy_info;
-        ret = recv(client_socket, &single_copy_info, sizeof(SingleCopyInfo), 0);
+        ret = recv(client_socket, &single_copy_info, sizeof(SingleCopyInfo), MSG_WAITALL);
         if (ret <= 0) {
             if (ret < 0) {
                 LOG(ERROR) << "recv single_copy_info failed, ret: " << ret;
@@ -367,7 +370,7 @@ int transportMemIntegrate(RankInfo *local_rank_info, RankInfo *remote_rank_info,
                    << " , local_id:" << local_rank_info->devicePhyId
                    << " , remote_id:" << remote_rank_info->devicePhyId;
         SingleCopyInfo status_info;
-        ret = recv(client_socket, &status_info, sizeof(SingleCopyInfo), 0);
+        ret = recv(client_socket, &status_info, sizeof(SingleCopyInfo), MSG_WAITALL);
         if (ret <= 0) {
             LOG(ERROR) << "failed to receive copy_info, ret: " << ret
                     << ", errno: " << errno
@@ -409,26 +412,26 @@ int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled) {
         return recv_socket;
     }
     
-    int client_socket = acceptFromTarget();
-    if (client_socket < 0) {
-        LOG(ERROR) << "acceptFromTarget failed, client_socket: "
-                   << client_socket;
-        return client_socket;
-    }
+    // int client_socket = acceptFromTarget();
+    // if (client_socket < 0) {
+    //     LOG(ERROR) << "acceptFromTarget failed, client_socket: "
+    //                << client_socket;
+    //     return client_socket;
+    // }
     RankControlInfo remote_control_info;
-    ret = recv(recv_socket, &remote_control_info, sizeof(RankControlInfo), 0);
+    ret = recv(recv_socket, &remote_control_info, sizeof(RankControlInfo), MSG_WAITALL);
     if (ret <= 0) {
         LOG(ERROR) << "Failed to receive remote_control_info, ret: " << ret
                    << ", errno: " << errno << ", error: " << strerror(errno);
         return -1;
     }
-    // RankControlInfo remote_control_info;
-    // ret = recv(recv_socket, &remote_control_info, sizeof(RankControlInfo), 0);
-    // if (ret <= 0) {
-    //     LOG(ERROR) << "Failed to receive remote_control_info, ret: " << ret
-    //                << ", errno: " << errno << ", error: " << strerror(errno);
-    //     return -1;
-    // }
+    int ack = 1;
+    ret = send(recv_socket, &ack, sizeof(int), 0);
+    if (ret <= 0) {
+        LOG(ERROR) << "Failed to receive remote_control_info, ret: " << ret
+                   << ", errno: " << errno << ", error: " << strerror(errno);
+        return -1;
+    }
 
     LOG(INFO) << "Received remote_control_info, deviceLogicId: "
               << remote_control_info.deviceLogicId
@@ -440,13 +443,14 @@ int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled) {
     // Check if TransportMem has been established with the peer
     std::string key_str = std::string(inet_ntoa(remote_control_info.hostIp)) + '-' +
                           std::to_string(remote_control_info.devicePhyId);
+    // g_map_mtx.lock(); // 手动加锁
     auto iter = g_target_key_to_connection_map.find(key_str);
     if (iter != g_target_key_to_connection_map.end()) {
         LOG(WARNING)
             << "A duplicate connection request from the same remote endpoint "
                "has been detected, the remote side may have restarted.";
     }
-
+    // g_map_mtx.unlock(); // 必须手动解锁
     std::string baseTag_ = key_str + std::string(inet_ntoa(local_rank_info->hostIp)) + '-' +
                            std::to_string(local_rank_info->devicePhyId);
     hccl::HcclIpAddress rempoteDevIp;
@@ -529,9 +533,11 @@ int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled) {
         return ret;
     }
 
-    g_target_key_to_connection_map[key_str].tcp_socket = client_socket;
+    // g_target_key_to_connection_map[key_str].tcp_socket = client_socket;
+    // g_map_mtx.lock(); // 手动加锁
     g_target_key_to_connection_map[key_str].recv_socket = recv_socket;
     g_target_key_to_connection_map[key_str].transport_mem = transport_mem;
+    // g_map_mtx.unlock(); // 必须手动解锁
     struct epoll_event event;
     event.events = EPOLLIN;
     // event.data.fd = recv_socket;
@@ -558,7 +564,7 @@ int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled) {
     return 0;
 }
 
-int recvMemInfo (int client_socket, aclrtStream stream) {
+int recvMemInfo1 (int client_socket, aclrtStream stream) {
     int ret = 0;
     SingleCopyInfo single_copy_info;
     ret = recv(client_socket, &single_copy_info, sizeof(single_copy_info), 0);
@@ -631,7 +637,7 @@ int transportMemTarget(aclrtStream stream) {
     for (int i = 0; i < n_events; ++i) {
         if (events[i].events & EPOLLIN) {
             int fd = events[i].data.fd;
-            ret =recvMemInfo(fd, stream);
+            ret =recvMemInfo1(fd, stream);
             if (ret <= 0) {
                 if (ret == 0) {
                     LOG(ERROR) << "epoll_wait failed: " << strerror(errno);

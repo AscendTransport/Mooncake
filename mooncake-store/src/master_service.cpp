@@ -289,10 +289,19 @@ auto MasterService::GetReplicaList(std::string_view key)
         return tl::make_unexpected(ErrorCode::OBJECT_NOT_FOUND);
     }
     auto& metadata = accessor.Get();
-    if (auto status = metadata.HasDiffRepStatus(ReplicaStatus::COMPLETE)) {
-        LOG(WARNING) << "key=" << key << ", status=" << *status
-                     << ", error=replica_not_ready";
-        return tl::make_unexpected(ErrorCode::REPLICA_IS_NOT_READY);
+    uint32_t try_count = 0;
+    while (1) {
+        if (try_count >= 5) {
+            return tl::make_unexpected(ErrorCode::REPLICA_IS_NOT_READY);
+        }
+        if (auto status = metadata.HasDiffRepStatus(ReplicaStatus::COMPLETE)) {
+            LOG(WARNING) << "key=" << key << ", status=" << *status
+                        << ", error=replica_not_ready";
+            try_count++;
+            usleep(1);
+            continue;
+        }
+        break;
     }
 
     std::vector<Replica::Descriptor> replica_list;

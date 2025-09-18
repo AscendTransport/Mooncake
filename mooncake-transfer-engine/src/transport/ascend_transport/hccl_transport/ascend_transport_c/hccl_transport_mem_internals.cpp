@@ -38,6 +38,8 @@ HcclDispatcher dispatcher_{nullptr};
 std::unordered_map<std::string, ConnectionInfo> g_target_key_to_connection_map;
 std::vector<MemBlock> g_localBuffer;
 
+// std::mutex g_map_mtx;
+
 int g_epoll_fd_agg = 0;
 int g_server_socket = 0;
 int g_epoll_fd = 0;
@@ -148,6 +150,7 @@ int initServerNetSocket(RankInfo *local_rank_info) {
 // The out-of-band socket on the host side that ascend_transport depends on,
 // used to convey control information such as deviceId and deviceIp
 int initControlSocket(RankInfo *local_rank_info, bool aggregateEnabled) {
+    g_target_key_to_connection_map.clear();
     int ret = 0;
     g_server_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (g_server_socket < 0) {
@@ -290,7 +293,7 @@ static int connectToTarget(std::string target_ip, int target_port) {
 
 int controlInfoSend(RankInfo *local_rank_info, RankInfo *remote_rank_info) {
     int ret = 0;
-    std::string key_str = std::string(inet_ntoa(remote_rank_info->hostIp)) + '-' +
+    std::string key_str =  std::string(inet_ntoa(remote_rank_info->hostIp)) + '-' +
                           std::to_string(remote_rank_info->devicePhyId);
     LOG(INFO) << "aggTransportMemTask local_rank_info rankId: "
               << local_rank_info->rankId
@@ -328,30 +331,39 @@ int controlInfoSend(RankInfo *local_rank_info, RankInfo *remote_rank_info) {
         LOG(ERROR) << "client connect failed";
         return client_socket;
     }
-    int recv_socket = connectToTarget(inet_ntoa(remote_rank_info->hostIp), 
-                                      remote_rank_info->hostPort);
-    if (recv_socket < 0) {
-        LOG(ERROR) << "recv_socket connect failed";
-        return recv_socket;
-    }
+    // int recv_socket = connectToTarget(inet_ntoa(remote_rank_info->hostIp), 
+    //                                   remote_rank_info->hostPort);
+    // if (recv_socket < 0) {
+    //     LOG(ERROR) << "recv_socket connect failed";
+    //     return recv_socket;
+    // }
     ret = send(client_socket, &control_info, sizeof(RankControlInfo), 0);
     if (ret < 0) {
         LOG(ERROR) << "send control_info failed, ret: " << ret
                    << ", errno: " << errno << ", error: " << strerror(errno);
         return ret;
     }
-    g_target_key_to_connection_map[key_str].tcp_socket = client_socket;
-    g_target_key_to_connection_map[key_str].recv_socket = recv_socket;
-    LOG(INFO) << "target_key:" << key_str << ", tcp_socket:" << client_socket
-              << ", recv_socket:" << recv_socket;
-    
-    struct epoll_event event;
-    event.events = EPOLLIN;
-    event.data.fd = recv_socket;
-    if (epoll_ctl(g_epoll_fd_agg, EPOLL_CTL_ADD, recv_socket, &event) == -1) {
-        LOG(ERROR) << "epoll_ctl add client_socket fd failed";
+    int ack;
+    ret = recv(client_socket, &ack, sizeof(int), MSG_WAITALL);
+    if (ret <= 0) {
+        LOG(ERROR) << "Failed to receive remote_control_info, ret: " << ret
+                   << ", errno: " << errno << ", error: " << strerror(errno);
         return -1;
     }
+    // g_map_mtx.lock(); // 手动加锁
+    g_target_key_to_connection_map[key_str].tcp_socket = client_socket;
+    // g_map_mtx.unlock(); // 必须手动解锁
+    // g_target_key_to_connection_map[key_str].recv_socket = recv_socket;
+    // LOG(INFO) << "target_key:" << key_str << ", tcp_socket:" << client_socket
+    //           << ", recv_socket:" << recv_socket;
+    LOG(INFO) << "target_key:" << key_str << ", tcp_socket:" << client_socket; 
+    // struct epoll_event event;
+    // event.events = EPOLLIN;
+    // event.data.fd = recv_socket;
+    // if (epoll_ctl(g_epoll_fd_agg, EPOLL_CTL_ADD, recv_socket, &event) == -1) {
+    //     LOG(ERROR) << "epoll_ctl add client_socket fd failed";
+    //     return -1;
+    // }
     // if (epoll_ctl(g_epoll_fd_target, EPOLL_CTL_ADD, client_socket, &event) == -1) {
     //     LOG(ERROR) << "epoll_ctl add client_socket fd failed";
     //     return -1;
@@ -519,7 +531,9 @@ int createTransportMem(RankInfo *local_rank_info, RankInfo *remote_rank_info,
         return ret;
     }
     LOG(INFO) << "transport_mem connect success";
+    // g_map_mtx.lock(); // 手动加锁
     g_target_key_to_connection_map[key_str].transport_mem = transport_mem;
+    // g_map_mtx.unlock(); // 必须手动解锁
     uint32_t m_num = g_localBuffer.size();
     std::vector<hccl::TransportMem::RmaMemDesc> rmaMemDescs(m_num);
 

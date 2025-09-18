@@ -484,7 +484,7 @@ int HcclTransport::install(std::string &local_server_name,
 
         void *devAddr = nullptr;
         ret = aclrtMalloc(&devAddr, TOTAL_AGG_DEV_SIZE,
-                          ACL_MEM_MALLOC_NORMAL_ONLY);
+                          ACL_MEM_MALLOC_HUGE_ONLY);
         if (ret != ACL_ERROR_NONE) {
             LOG(ERROR) << "Failed to allocate device memory, ret:" << ret;
             return ret;
