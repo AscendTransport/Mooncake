@@ -217,7 +217,7 @@ int aggTransportMemTransfer(aclrtStream stream) {
 
 int directTransfer(RankInfo *remote_rank_info, void *local_addr,
                    void *remote_addr, uint64_t len, int opcode) {
-    std::string key_str = inet_ntoa(remote_rank_info->hostIp) +
+    std::string key_str = std::string(remote_rank_info->hostIp) +
                           std::to_string(remote_rank_info->devicePhyId);
     auto req = std::make_shared<transferReq>();
     req->local_addr = local_addr;
@@ -268,7 +268,7 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
     std::shared_ptr<hccl::TransportMem> transport_mem{};
     // Check if a connection has been established with the peer, and send local
     // information to the peer
-    std::string key_str = inet_ntoa(remote_rank_info->hostIp) +
+    std::string key_str = std::string(remote_rank_info->hostIp) +
                           std::to_string(remote_rank_info->devicePhyId);
     // if (mem_type == DDR) {
     //     std::string local_key = inet_ntoa(local_rank_info->hostIp) + std::to_string(local_rank_info->devicePhyId);
@@ -297,7 +297,7 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
     //     }
     // }
     if (mem_type == DDR) {
-        std::string local_key = inet_ntoa(local_rank_info->hostIp) + std::to_string(local_rank_info->devicePhyId);
+        std::string local_key = std::string(local_rank_info->hostIp) + std::to_string(local_rank_info->devicePhyId);
         // PUT OWN OBJECT / GET OWN OBJECT
         if (local_key == key_str) {
             uint64_t req_len = 0;
@@ -368,13 +368,18 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
             LOG(ERROR) << "controlInfoSend failed, ret: " << ret;
             return ret;
         }
-        bool same_host =
-            local_rank_info->hostIp.s_addr == remote_rank_info->hostIp.s_addr;
-        // For A2 series, internal communication among 8 cards does not cross
-        // HCCS, such as communication among cards 0-7
-        bool same_group = (local_rank_info->devicePhyId / 8) ==
-                          (remote_rank_info->devicePhyId / 8);
-        bool is_cross_hccs = !(same_host && same_group);
+        bool is_cross_hccs = false;
+        if (a3Enabled()) {
+            is_cross_hccs = false;
+        } else {
+            bool same_host =
+                (strcmp(local_rank_info->hostIp, remote_rank_info->hostIp) == 0);
+            // For A2 series, internal communication among 8 cards does not cross
+            // HCCS, such as communication among cards 0-7
+            bool same_group = (local_rank_info->devicePhyId / 8) ==
+                            (remote_rank_info->devicePhyId / 8);
+            is_cross_hccs = !(same_host && same_group);
+        }
         if (enableAscendLogging()) {
             LOG(INFO) << "hccl transport is cross_hccs: "
                       << (is_cross_hccs ? "true (cross-hccs)"
