@@ -83,7 +83,7 @@ class HcclTransport : public Transport {
     int getDevIdAndIpPortFromServerName(std::string &local_server_name,
                                         std::string &ip, int &ip_port,
                                         int &devicePhyId);
-    int rankInfoParse(int devicePhyId, std::string hostIp);
+    int devInfoParse(std::string hostIp);
     int prepareTransport(std::vector<Slice *> &slice_list);
 
     int startNonAggThreads();

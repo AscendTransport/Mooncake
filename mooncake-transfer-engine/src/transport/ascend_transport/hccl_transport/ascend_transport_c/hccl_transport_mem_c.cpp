@@ -46,25 +46,49 @@ int initTransportMem(RankInfo *local_rank_info, bool aggregateEnabled) {
         return -1;
     }
 
-    uint32_t devPid;
-    ret = SalGetBareTgid(reinterpret_cast<uint32_t *>(&devPid));
+    ret = rtGetDevicePhyIdByIndex(local_rank_info->deviceLogicId, &local_rank_info->devicePhyId);
+    if (ret) {
+        LOG(ERROR) << "HcclTransport: rtGetDevicePhyIdByIndex failed, ret: " << ret;
+        return ret;
+    }
+
+    getDevIpAddresses(local_rank_info);
+
+    if (a3Enabled()) {
+        const int infoTypeSdid = 26;
+        ret = rtGetDeviceInfo(local_rank_info->deviceLogicId,
+                              RT_MODULE_TYPE_SYSTEM, infoTypeSdid,
+                              &local_rank_info->sdid);
+        if (ret) {
+            LOG(ERROR) << "rtGetDeviceInfo failed, ret: " << ret;
+            return ret;
+        }
+        ret = rtGetServerIDBySDID(local_rank_info->sdid,
+                                  &local_rank_info->serverId);
+        if (ret) {
+            LOG(ERROR) << "rtGetServerIDBySDID failed, ret: " << ret;
+            return ret;
+        }
+    }
+
+    ret = SalGetBareTgid(&local_rank_info->devPid);
     if (ret) {
         LOG(ERROR) << "SalGetBareTgid failed: " << ret;
         return ret;
     }
 
-    local_rank_info->pid = (uint64_t)devPid;
-
     LOG(INFO) << "initTransportMem local_rank_info rankId: "
               << local_rank_info->rankId
-              << ", serverIdx: " << local_rank_info->serverIdx
+              << ", serverId: " << local_rank_info->serverId
               << ", deviceLogicId: " << local_rank_info->deviceLogicId
               << ", devicePhyId: " << local_rank_info->devicePhyId
-              << ", deviceIp: " << inet_ntoa(local_rank_info->deviceIp)
+              << ", deviceIp: " << local_rank_info->deviceIp
               << ", devicePort: " << local_rank_info->devicePort
-              << ", hostIp: " << inet_ntoa(local_rank_info->hostIp)
+              << ", hostIp: " << local_rank_info->hostIp
               << ", hostPort: " << local_rank_info->hostPort
-              << ", device pid: " << local_rank_info->pid;
+              << ", device Pid: " << local_rank_info->devPid
+              << ", vnicIp: " << local_rank_info->vnicIp
+              << ", sdid: " << local_rank_info->sdid;
 
     // Initialize the virtual network card and socket for the data channel,
     // exchange RmaMem, and create the QP connection
@@ -86,7 +110,7 @@ int initTransportMem(RankInfo *local_rank_info, bool aggregateEnabled) {
 }
 
 int transportMemAddOpFence(RankInfo *remote_rank_info, aclrtStream stream) {
-    std::string key_str = std::string(inet_ntoa(remote_rank_info->hostIp)) + '-' +
+    std::string key_str = std::string(remote_rank_info->hostIp) + '-' +
                           std::to_string(remote_rank_info->devicePhyId);
     // g_map_mtx.lock(); // 手动加锁
     int ret = g_target_key_to_connection_map[key_str].transport_mem->AddOpFence(
@@ -170,11 +194,11 @@ int nonAggTransportMemTask(RankInfo *local_rank_info,
     // information to the peer
     int ret = 0;
     g_dev_write_offset = 0;
-    std::string key_str = std::string(inet_ntoa(remote_rank_info->hostIp)) + '-' +
+    std::string key_str = std::string(remote_rank_info->hostIp) + '-' +
                           std::to_string(remote_rank_info->devicePhyId);
     uint64_t local_buffer = 0;
     if (mem_type == DDR) {
-        std::string local_key = std::string(inet_ntoa(local_rank_info->hostIp)) +'-'+ std::to_string(local_rank_info->devicePhyId);
+        std::string local_key = std::string(local_rank_info->hostIp) +'-'+ std::to_string(local_rank_info->devicePhyId);
         // PUT OWN OBJECT / GET OWN OBJECT
         if (local_key == key_str) {
             if (op_code == WRITE) {
@@ -213,13 +237,18 @@ int nonAggTransportMemTask(RankInfo *local_rank_info,
             LOG(ERROR) << "controlInfoSend failed, ret: " << ret;
             return ret;
         }
-        bool same_host =
-            local_rank_info->hostIp.s_addr == remote_rank_info->hostIp.s_addr;
-        // For A2 series, internal communication among 8 cards does not cross
-        // HCCS, such as communication among cards 0-7
-        bool same_group = (local_rank_info->devicePhyId / 8) ==
-                          (remote_rank_info->devicePhyId / 8);
-        bool is_cross_hccs = !(same_host && same_group);
+        bool is_cross_hccs = false;
+        if (a3Enabled()) {
+            is_cross_hccs = false;
+        } else {
+            bool same_host =
+                (strcmp(local_rank_info->hostIp, remote_rank_info->hostIp) == 0);
+            // For A2 series, internal communication among 8 cards does not cross
+            // HCCS, such as communication among cards 0-7
+            bool same_group = (local_rank_info->devicePhyId / 8) ==
+                            (remote_rank_info->devicePhyId / 8);
+            is_cross_hccs = !(same_host && same_group);
+        }
         if (enableAscendLogging()) {
             LOG(INFO) << "hccl transport is cross_hccs: "
                       << (is_cross_hccs ? "true (cross-hccs)"
@@ -341,7 +370,7 @@ int transportMemIntegrate(RankInfo *local_rank_info, RankInfo *remote_rank_info,
     uint64_t local_buffer = 0;
     uint64_t local_dev_addr = reinterpret_cast<uint64_t>(g_dev_addr);
     if (op_code == WRITE) {
-        std::string key_str = std::string(inet_ntoa(remote_rank_info->hostIp)) + '-' + std::to_string(remote_rank_info->devicePhyId);
+        std::string key_str = std::string(remote_rank_info->hostIp)) + '-' + std::to_string(remote_rank_info->devicePhyId);
         int client_socket = g_target_key_to_connection_map[key_str].tcp_socket;
         SingleCopyInfo copy_info;
         copy_info.host_addr = offset;
@@ -436,12 +465,12 @@ int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled) {
     LOG(INFO) << "Received remote_control_info, deviceLogicId: "
               << remote_control_info.deviceLogicId
               << ", devicePhyId: " << remote_control_info.devicePhyId
-              << ", hostIp: " << inet_ntoa(remote_control_info.hostIp)
-              << ", deviceIp: " << inet_ntoa(remote_control_info.deviceIp)
-              << ", device pid: " << remote_control_info.pid;
+              << ", hostIp: " << std::string(remote_control_info.hostIp)
+              << ", deviceIp: " << std::string(remote_control_info.deviceIp)
+              << ", device pid: " << remote_control_info.devPid;
 
     // Check if TransportMem has been established with the peer
-    std::string key_str = std::string(inet_ntoa(remote_control_info.hostIp)) + '-' +
+    std::string key_str = std::string(remote_control_info.hostIp) + '-' +
                           std::to_string(remote_control_info.devicePhyId);
     // g_map_mtx.lock(); // 手动加锁
     auto iter = g_target_key_to_connection_map.find(key_str);
@@ -451,18 +480,23 @@ int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled) {
                "has been detected, the remote side may have restarted.";
     }
     // g_map_mtx.unlock(); // 必须手动解锁
-    std::string baseTag_ = key_str + std::string(inet_ntoa(local_rank_info->hostIp)) + '-' +
+    std::string baseTag_ = key_str + std::string(local_rank_info->hostIp) + '-' +
                            std::to_string(local_rank_info->devicePhyId);
-    hccl::HcclIpAddress rempoteDevIp;
+    hccl::HcclIpAddress remoteDevIp;
     std::shared_ptr<hccl::HcclSocket> hccl_ctrl_socket;
     std::shared_ptr<hccl::HcclSocket> hccl_data_socket;
-    bool same_host =
-        local_rank_info->hostIp.s_addr == remote_control_info.hostIp.s_addr;
-    // For A2 series, internal communication among 8 cards does not cross HCCS,
-    // such as communication among cards 0-7
-    bool same_group = (local_rank_info->devicePhyId / 8) ==
-                      (remote_control_info.devicePhyId / 8);
-    bool is_cross_hccs = !(same_host && same_group);
+    bool is_cross_hccs = false;
+    if (a3Enabled()) {
+        is_cross_hccs = false;
+    } else {
+        bool same_host =
+            (strcmp(local_rank_info->hostIp, remote_rank_info->hostIp) == 0);
+        // For A2 series, internal communication among 8 cards does not cross
+        // HCCS, such as communication among cards 0-7
+        bool same_group = (local_rank_info->devicePhyId / 8) ==
+                        (remote_rank_info->devicePhyId / 8);
+        is_cross_hccs = !(same_host && same_group);
+    }
     if (enableAscendLogging()) {
         LOG(INFO) << "transport is cross_hccs: "
                   << (is_cross_hccs ? "true (cross-hccs)"
@@ -470,15 +504,20 @@ int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled) {
     }
     if (!is_cross_hccs) {
         std::vector<unsigned int> remoteDevPhyId;
-        rempoteDevIp = hccl::HcclIpAddress(remote_control_info.devicePhyId);
-        remoteDevPhyId.emplace_back(remote_control_info.devicePhyId);
-        ret = hrtRaGetSingleSocketVnicIpInfo(
-            local_rank_info->devicePhyId, DeviceIdType::DEVICE_ID_TYPE_PHY_ID,
-            remote_control_info.devicePhyId, rempoteDevIp);
-        if (ret) {
-            LOG(ERROR) << "hrtRaGetSingleSocketVnicIpInfo failed, ret: " << ret;
-            return ret;
+        if (a3Enabled()) {
+            remoteDevIp = hccl::HcclIpAddress(remote_control_info.vnicIp);
+        } else {
+            ret = hrtRaGetSingleSocketVnicIpInfo(
+                local_rank_info->devicePhyId,
+                DeviceIdType::DEVICE_ID_TYPE_PHY_ID,
+                remote_control_info.devicePhyId, remoteDevIp);
+            if (ret) {
+                LOG(ERROR) << "hrtRaGetSingleSocketVnicIpInfo failed, ret: "
+                           << ret;
+                return ret;
+            }
         }
+        remoteDevPhyId.push_back(remote_control_info.devicePhyId);
         ret = hccl::P2PMgmtPub::EnableP2P(remoteDevPhyId);
         if (ret) {
             LOG(ERROR) << "P2PMgmtPub EnableP2P failed, ret: " << ret;
@@ -490,29 +529,29 @@ int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled) {
             return ret;
         }
         ret = acceptHcclSocket(hccl_ctrl_socket, baseTag_ + "ctrl",
-                               rempoteDevIp, is_cross_hccs);
+                               remoteDevIp, is_cross_hccs);
         if (ret) {
             LOG(ERROR) << "acceptHcclSocket ctrl failed, ret: " << ret;
             return ret;
         }
 
         ret = acceptHcclSocket(hccl_data_socket, baseTag_ + "data",
-                               rempoteDevIp, is_cross_hccs);
+                               remoteDevIp, is_cross_hccs);
         if (ret) {
             LOG(ERROR) << "acceptHcclSocket data failed, ret: " << ret;
             return ret;
         }
     } else {
-        rempoteDevIp = hccl::HcclIpAddress(remote_control_info.deviceIp);
+        remoteDevIp = hccl::HcclIpAddress(remote_control_info.deviceIp);
         ret = acceptHcclSocket(hccl_ctrl_socket, baseTag_ + "ctrl",
-                               rempoteDevIp, is_cross_hccs);
+                               remoteDevIp, is_cross_hccs);
         if (ret) {
             LOG(ERROR) << "acceptHcclSocket ctrl failed, ret: " << ret;
             return ret;
         }
 
         ret = acceptHcclSocket(hccl_data_socket, baseTag_ + "data",
-                               rempoteDevIp, is_cross_hccs);
+                               remoteDevIp, is_cross_hccs);
         if (ret) {
             LOG(ERROR) << "acceptHcclSocket data failed, ret: " << ret;
             return ret;

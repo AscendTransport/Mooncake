@@ -49,31 +49,35 @@ extern "C" {
 #define HCCL_RETRY_TIMES 3
 
 struct RankControlInfo {
-    uint64_t deviceLogicId;
-    uint64_t devicePhyId;
-    struct in_addr hostIp;
-    struct in_addr deviceIp;
-    uint64_t pid;  // npu device pid
+    char hostIp[128];
+    char deviceIp[128];
+    char vnicIp[128];
+    uint32_t devPid;
+    int64_t sdid;
+    uint32_t deviceLogicId;
+    uint32_t devicePhyId;
 };
 
 struct RankInfo {
+    char hostIp[128];
+    char deviceIp[128];
+    char vnicIp[128];
     uint64_t rankId = 0xFFFFFFFF;
-    uint64_t serverIdx = 0;
-    struct in_addr hostIp;
     uint64_t hostPort = 0;
-    uint64_t deviceLogicId = 0;
-    uint64_t devicePhyId = 0;
     DevType deviceType{DevType::DEV_TYPE_NOSOC};
-    struct in_addr deviceIp;
     uint64_t devicePort = 16666;
-    uint64_t pid;  // npu device pid
+    uint32_t devPid;
+    int64_t sdid = 0xFFFFFFFF;
+    uint32_t serverId = 0;
+    uint32_t deviceLogicId;
+    uint32_t devicePhyId;
     RankInfo() = default;
     RankInfo(const RankControlInfo &controlInfo)
         : hostIp(controlInfo.hostIp),
           deviceLogicId(controlInfo.deviceLogicId),
           devicePhyId(controlInfo.devicePhyId),
           deviceIp(controlInfo.deviceIp),
-          pid(controlInfo.pid) {}
+          devPid(controlInfo.pid) {}
 };
 
 struct MemBlock {
@@ -125,6 +129,8 @@ extern std::unordered_map<std::string, ConnectionInfo>
 extern std::vector<MemBlock> g_localBuffer;
 extern int g_epoll_fd_agg;
 extern int g_epoll_fd_target;
+
+extern bool a3Enabled();
 
 extern int initServerNetSocket(RankInfo *local_rank_info);
 
