@@ -370,7 +370,7 @@ int transportMemIntegrate(RankInfo *local_rank_info, RankInfo *remote_rank_info,
     uint64_t local_buffer = 0;
     uint64_t local_dev_addr = reinterpret_cast<uint64_t>(g_dev_addr);
     if (op_code == WRITE) {
-        std::string key_str = std::string(remote_rank_info->hostIp)) + '-' + std::to_string(remote_rank_info->devicePhyId);
+        std::string key_str = std::string(remote_rank_info->hostIp) + '-' + std::to_string(remote_rank_info->devicePhyId);
         int client_socket = g_target_key_to_connection_map[key_str].tcp_socket;
         SingleCopyInfo copy_info;
         copy_info.host_addr = offset;
@@ -490,11 +490,11 @@ int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled) {
         is_cross_hccs = false;
     } else {
         bool same_host =
-            (strcmp(local_rank_info->hostIp, remote_rank_info->hostIp) == 0);
+            (strcmp(local_rank_info->hostIp, remote_control_info.hostIp) == 0);
         // For A2 series, internal communication among 8 cards does not cross
         // HCCS, such as communication among cards 0-7
         bool same_group = (local_rank_info->devicePhyId / 8) ==
-                        (remote_rank_info->devicePhyId / 8);
+                        (remote_control_info.devicePhyId / 8);
         is_cross_hccs = !(same_host && same_group);
     }
     if (enableAscendLogging()) {

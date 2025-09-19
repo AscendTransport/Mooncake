@@ -236,8 +236,8 @@ void HcclTransport::initiatorLoop(int deviceLogicId) {
 
     while (running_) {
         std::unique_lock<std::mutex> lock(initiator_mutex_);
-        initiator_cond_.wait(lock, [this, selfIdx]() {
-            return !allReqQueues_[selfIdx].empty() || !running_;
+        initiator_cond_.wait(lock, [this]() {
+            return !allReqQueues_.empty() || !running_;
         });
 
         if (!running_) {
