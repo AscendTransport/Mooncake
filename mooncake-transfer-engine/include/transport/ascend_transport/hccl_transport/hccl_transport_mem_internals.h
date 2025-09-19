@@ -74,11 +74,14 @@ struct RankInfo {
 
     RankInfo() = default;
     RankInfo(const RankControlInfo &controlInfo)
-        : hostIp(controlInfo.hostIp),
+        : devPid(controlInfo.devPid),
+          sdid(controlInfo.sdid),
           deviceLogicId(controlInfo.deviceLogicId),
-          devicePhyId(controlInfo.devicePhyId),
-          deviceIp(controlInfo.deviceIp),
-          devPid(controlInfo.pid) {}
+          devicePhyId(controlInfo.devicePhyId) {
+            memcpy(hostIp, controlInfo.hostIp, sizeof(controlInfo.hostIp));
+            memcpy(deviceIp, controlInfo.deviceIp, sizeof(controlInfo.deviceIp));
+            memcpy(vnicIp, controlInfo.vnicIp, sizeof(controlInfo.vnicIp));
+        }
 };
 
 struct MemBlock {
@@ -157,6 +160,8 @@ extern int acceptHcclSocket(std::shared_ptr<hccl::HcclSocket> &hccl_socket,
                             std::string baseTag_,
                             hccl::HcclIpAddress rempoteDevIp,
                             bool is_cross_hccs);
+
+extern void getDevIpAddresses(RankInfo *local_rank_info);
 
 #ifdef __cplusplus
 }

@@ -395,7 +395,6 @@ TransferMetadata::decodeSegmentDesc(Json::Value &segmentJSON,
         desc->rank_info.hostPort = rankInfoJSON["hostPort"].asUInt64();
         desc->rank_info.deviceLogicId = rankInfoJSON["deviceLogicId"].asUInt();
         desc->rank_info.devicePhyId = rankInfoJSON["devicePhyId"].asUInt();
-        desc->rank_info.devicePhyId = rankInfoJSON["devicePhyId"].asUInt64();
         desc->rank_info.deviceType = rankInfoJSON["deviceType"].asUInt64();
         desc->rank_info.deviceIp = rankInfoJSON["deviceIp"].asString();
         desc->rank_info.devicePort = rankInfoJSON["devicePort"].asUInt64();

@@ -488,11 +488,11 @@ int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled) {
         is_cross_hccs = false;
     } else {
         bool same_host =
-            (strcmp(local_rank_info->hostIp, remote_rank_info->hostIp) == 0);
+            (strcmp(local_rank_info->hostIp, remote_control_info.hostIp) == 0);
         // For A2 series, internal communication among 8 cards does not cross
         // HCCS, such as communication among cards 0-7
         bool same_group = (local_rank_info->devicePhyId / 8) ==
-                        (remote_rank_info->devicePhyId / 8);
+                        (remote_control_info.devicePhyId / 8);
         is_cross_hccs = !(same_host && same_group);
     }
     if (enableAscendLogging()) {
