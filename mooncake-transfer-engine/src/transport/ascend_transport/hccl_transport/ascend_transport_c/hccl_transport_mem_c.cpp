@@ -204,7 +204,8 @@ int nonAggTransportMemTask(RankInfo *local_rank_info,
     std::shared_ptr<hccl::HcclSocket> hccl_data_socket;
     std::shared_ptr<hccl::TransportMem> transport_mem{};
     auto iter = g_target_key_to_connection_map.find(key_str);
-    if (iter == g_target_key_to_connection_map.end()) {
+    if (iter == g_target_key_to_connection_map.end() ||
+        g_target_key_to_connection_map[key_str].tcp_socket == 0) {
         ret = controlInfoSend(local_rank_info, remote_rank_info);
         if (ret) {
             LOG(ERROR) << "controlInfoSend failed, ret: " << ret;
@@ -409,12 +410,12 @@ int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled) {
         return recv_socket;
     }
     
-    int client_socket = acceptFromTarget();
-    if (client_socket < 0) {
-        LOG(ERROR) << "acceptFromTarget failed, client_socket: "
-                   << client_socket;
-        return client_socket;
-    }
+    // int client_socket = acceptFromTarget();
+    // if (client_socket < 0) {
+    //     LOG(ERROR) << "acceptFromTarget failed, client_socket: "
+    //                << client_socket;
+    //     return client_socket;
+    // }
     RankControlInfo remote_control_info;
     ret = recv(recv_socket, &remote_control_info, sizeof(RankControlInfo), 0);
     if (ret <= 0) {
@@ -529,7 +530,7 @@ int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled) {
         return ret;
     }
 
-    g_target_key_to_connection_map[key_str].tcp_socket = client_socket;
+    // g_target_key_to_connection_map[key_str].tcp_socket = client_socket;
     g_target_key_to_connection_map[key_str].recv_socket = recv_socket;
     g_target_key_to_connection_map[key_str].transport_mem = transport_mem;
     struct epoll_event event;

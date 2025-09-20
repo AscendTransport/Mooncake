@@ -328,12 +328,12 @@ int controlInfoSend(RankInfo *local_rank_info, RankInfo *remote_rank_info) {
         LOG(ERROR) << "client connect failed";
         return client_socket;
     }
-    int recv_socket = connectToTarget(inet_ntoa(remote_rank_info->hostIp), 
-                                      remote_rank_info->hostPort);
-    if (recv_socket < 0) {
-        LOG(ERROR) << "recv_socket connect failed";
-        return recv_socket;
-    }
+    // int recv_socket = connectToTarget(inet_ntoa(remote_rank_info->hostIp), 
+    //                                   remote_rank_info->hostPort);
+    // if (recv_socket < 0) {
+    //     LOG(ERROR) << "recv_socket connect failed";
+    //     return recv_socket;
+    // }
     ret = send(client_socket, &control_info, sizeof(RankControlInfo), 0);
     if (ret < 0) {
         LOG(ERROR) << "send control_info failed, ret: " << ret
@@ -341,17 +341,16 @@ int controlInfoSend(RankInfo *local_rank_info, RankInfo *remote_rank_info) {
         return ret;
     }
     g_target_key_to_connection_map[key_str].tcp_socket = client_socket;
-    g_target_key_to_connection_map[key_str].recv_socket = recv_socket;
-    LOG(INFO) << "target_key:" << key_str << ", tcp_socket:" << client_socket
-              << ", recv_socket:" << recv_socket;
+    // g_target_key_to_connection_map[key_str].recv_socket = recv_socket;
+    LOG(INFO) << "target_key:" << key_str << ", tcp_socket:" << client_socket;
     
-    struct epoll_event event;
-    event.events = EPOLLIN;
-    event.data.fd = recv_socket;
-    if (epoll_ctl(g_epoll_fd_agg, EPOLL_CTL_ADD, recv_socket, &event) == -1) {
-        LOG(ERROR) << "epoll_ctl add client_socket fd failed";
-        return -1;
-    }
+    // struct epoll_event event;
+    // event.events = EPOLLIN;
+    // event.data.fd = recv_socket;
+    // if (epoll_ctl(g_epoll_fd_agg, EPOLL_CTL_ADD, recv_socket, &event) == -1) {
+    //     LOG(ERROR) << "epoll_ctl add client_socket fd failed";
+    //     return -1;
+    // }
     // if (epoll_ctl(g_epoll_fd_target, EPOLL_CTL_ADD, client_socket, &event) == -1) {
     //     LOG(ERROR) << "epoll_ctl add client_socket fd failed";
     //     return -1;

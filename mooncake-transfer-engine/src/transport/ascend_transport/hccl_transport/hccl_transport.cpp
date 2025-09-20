@@ -34,6 +34,7 @@ HcclTransport::~HcclTransport() {
     if (running_) {
         running_ = false;
     }
+    initiator_cond_.notify_one();
 
     if (aggregateEnabled_) {
         if (aggInitiatorThread_.joinable()) {
@@ -226,8 +227,11 @@ void HcclTransport::initiatorLoop(int deviceLogicId) {
 
     while (running_) {
         std::unique_lock<std::mutex> lock(initiator_mutex_);
-        if (allReqQueues_.empty()) {
-            initiator_cond_.wait(lock);
+        initiator_cond_.wait(
+            lock, [this] { return !allReqQueues_.empty() || !running_; });
+
+        if (!running_) {
+            break;
         }
         auto slice_list = std::move(allReqQueues_.front());
         allReqQueues_.pop();
@@ -543,7 +547,6 @@ Status HcclTransport::submitTransfer(
         std::unique_lock<std::mutex> lock(initiator_mutex_);
         slice_list.push_back(slice);
         lock.unlock();
-        initiator_cond_.notify_one();
     }
     std::unique_lock<std::mutex> lock(initiator_mutex_);
     allReqQueues_.push(slice_list);
