@@ -518,7 +518,6 @@ int createTransportMem(RankInfo *local_rank_info, RankInfo *remote_rank_info,
         return ret;
     }
     LOG(INFO) << "transport_mem connect success";
-    g_target_key_to_connection_map[key_str].transport_mem = transport_mem;
     uint32_t m_num = g_localBuffer.size();
     std::vector<hccl::TransportMem::RmaMemDesc> rmaMemDescs(m_num);
 
@@ -603,6 +602,7 @@ int createTransportMem(RankInfo *local_rank_info, RankInfo *remote_rank_info,
     LOG(INFO) << "ExchangeMem and EnableMemAccess Success, local devicePhyId: "
               << local_rank_info->devicePhyId
               << ", target devicePhyId: " << remote_rank_info->devicePhyId;
+    g_target_key_to_connection_map[key_str].transport_mem = transport_mem;
     return 0;
 }
 

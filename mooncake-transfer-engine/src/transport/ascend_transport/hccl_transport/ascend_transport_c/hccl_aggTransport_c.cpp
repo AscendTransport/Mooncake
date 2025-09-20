@@ -398,22 +398,22 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
     }
     LOG(INFO) << "sendMemInfo end, opcode:" << opcode;
 
-    g_hugeBufferIdx = 0;
+    uint64_t send_index = 0;
     uint64_t idx = 0;
     while (idx < local_memPool.size()) {
         uint64_t mergeLen = 0;
         if (opcode == WRITE) {
-            while (!g_localHugeBuffer[g_hugeBufferIdx]->freed.load(
+            while (!g_localHugeBuffer[send_index]->freed.load(
                 std::memory_order_acquire)) {
                 std::this_thread::yield();
             }
 
-            g_localHugeBuffer[g_hugeBufferIdx]->freed.store(
+            g_localHugeBuffer[send_index]->freed.store(
                 false, std::memory_order_release);
         }
 
         void *mergeAddr =
-            (void *)g_localHugeBuffer[g_hugeBufferIdx]->memBlock.addr;
+            (void *)g_localHugeBuffer[send_index]->memBlock.addr;
         while (idx < local_memPool.size()) {
             const MemBlock &localMem = local_memPool[idx];
             if (mergeLen + localMem.len > PER_HUGE_BUFFER_SIZE) {
@@ -450,20 +450,20 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
         }
 
         req->local_addr =
-            (void *)g_localHugeBuffer[g_hugeBufferIdx]->memBlock.addr;
+            (void *)g_localHugeBuffer[send_index]->memBlock.addr;
         req->len = mergeLen;
         req->opcode = opcode;
         req->isMerge = 1;
         req->key_str = key_str;
-        req->mergeIdx = g_hugeBufferIdx;
+        req->mergeIdx = send_index;
         LOG(INFO) << "req local addr:" << req->local_addr << ", len:" << mergeLen << ", key:" << key_str << ", index:"<< req->mergeIdx;
         std::unique_lock<std::mutex> lock(g_transfer_mutex);
         g_transferReqList.push(req);
         lock.unlock();
         g_transfer_cond.notify_one();
         mergeLen = 0;
-        g_hugeBufferIdx =
-            (g_hugeBufferIdx + 1) % HUGE_BUFFER_NUM;
+        send_index =
+            (send_index + 2) % HUGE_BUFFER_NUM;
     }
     LOG(ERROR) << "g_splitList start";
     if (opcode == READ) {
@@ -478,10 +478,10 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
 
             g_splitList.pop();
             void *mergeAddr =
-                (void *)g_localHugeBuffer[mergeIdx]->memBlock.addr;
+                (void *)g_localHugeBuffer[send_index]->memBlock.addr;
             lock.unlock();
             uint64_t mergeLen = 0;
-            while (Idx < local_memPool.size()) {
+            while (idx < local_memPool.size()) {
                 const MemBlock &localMem = local_memPool[idx];
                 if (mergeLen + localMem.len > PER_HUGE_BUFFER_SIZE) {
                     break;
@@ -526,7 +526,15 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
     if (opcode == WRITE) {
         ret = recv(client_socket, &ready, sizeof(int), MSG_WAITALL);
         if (ret <= 0) {
-            LOG(ERROR) << "Failed to receive ready, ret: " << ret
+            LOG(ERROR) << "Failed to receive ready write, ret: " << ret
+                       << ", errno: " << errno
+                       << ", error: " << strerror(errno);
+            return -1;
+        }
+    } else {
+        ret = send(client_socket, &ready, sizeof(int), 0);
+        if (ret < 0) {
+            LOG(ERROR) << "Failed to send ready read, ret: " << ret
                        << ", errno: " << errno
                        << ", error: " << strerror(errno);
             return -1;
@@ -607,7 +615,7 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
         }
     }
 
-    g_hugeBufferIdx = 0;
+    uint64_t recv_index = 1;
     if (opcode == WRITE) {
         struct iovec iov[1];
         iov[0].iov_base = static_cast<void *>(g_localMemtoSend.data());
@@ -631,12 +639,12 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
     while (idx < receivedMemPool.size()) {
         uint64_t mergeLen = 0;
         void *mergeAddr =
-            (void *)g_localHugeBuffer[g_hugeBufferIdx]->memBlock.addr;
+            (void *)g_localHugeBuffer[recv_index]->memBlock.addr;
         
-        while (!g_localHugeBuffer[g_hugeBufferIdx]->freed.load(std::memory_order_acquire)) {
+        while (!g_localHugeBuffer[recv_index]->freed.load(std::memory_order_acquire)) {
             std::this_thread::yield();
         }
-        g_localHugeBuffer[g_hugeBufferIdx]->freed.store(false, std::memory_order_release);
+        g_localHugeBuffer[recv_index]->freed.store(false, std::memory_order_release);
         if (opcode == READ) {
             while (idx < receivedMemPool.size()) {
                 auto &block = receivedMemPool[idx];
@@ -691,7 +699,7 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
             }
 
             uint64_t base_addr =
-                g_localHugeBuffer[g_hugeBufferIdx]->memBlock.addr;
+                g_localHugeBuffer[recv_index]->memBlock.addr;
             ret = send(client_socket, &base_addr, sizeof(uint64_t), 0);
             if (ret < 0) {
                 LOG(ERROR) << "Failed to send base_addr to remote, ret: " << ret
@@ -700,6 +708,14 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
                 return ret;
             }
             LOG(INFO) << "RECV send ok";
+            ret = recv(client_socket, &ready, sizeof(int), MSG_WAITALL);
+            if (ret <= 0) {
+                LOG(ERROR) << "Failed to receive ready write, ret: " << ret
+                        << ", errno: " << errno
+                        << ", error: " << strerror(errno);
+                return -1;
+            }
+            LOG(INFO) << "RECV ready";
         } else {
             ret = recv(client_socket, &ready, sizeof(int), MSG_WAITALL);
             if (ret <= 0) {
@@ -760,15 +776,15 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
                 LOG(INFO) << "POOLING RECV D2H mergeAddr:" << mergeAddr << ", block_addr:" << receivedMemPool[0].addr << ", len" << mergeLen;
             }
         }
-        g_hugeBufferIdx =
-            (g_hugeBufferIdx + 1) % HUGE_BUFFER_NUM;
+        recv_index =
+            (recv_index + 2) % HUGE_BUFFER_NUM;
 
-        ret = g_localHugeBuffer[g_hugeBufferIdx]->freed.load(std::memory_order_acquire);
+        ret = g_localHugeBuffer[recv_index]->freed.load(std::memory_order_acquire);
         if (ret) {
-            LOG(ERROR) << "Error: Object at index " << g_hugeBufferIdx << " has been freed!";
+            LOG(ERROR) << "Error: Object at index " << recv_index << " has been freed!";
             return ret;
         }
-        g_localHugeBuffer[g_hugeBufferIdx]->freed.store(true, std::memory_order_release);  
+        g_localHugeBuffer[recv_index]->freed.store(true, std::memory_order_release);  
     }
 
     if (opcode == WRITE) {
