@@ -297,13 +297,14 @@ std::optional<std::shared_ptr<Client>> Client::Create(
         // Initialize storage backend
         client->PrepareStorageBackend(storage_root_dir, response.value());
     }
-
-    // Initialize transfer engine
-    err = client->InitTransferEngine(local_name, metadata_connstring,
-                                     protocol, protocol_args);
-    if (err != ErrorCode::OK) {
-        LOG(ERROR) << "Failed to initialize transfer engine";
-        return std::nullopt;
+    if (protocol != "ascend_no_transport") {
+            // Initialize transfer engine
+        err = client->InitTransferEngine(local_name, metadata_connstring,
+                                        protocol, protocol_args);
+        if (err != ErrorCode::OK) {
+            LOG(ERROR) << "Failed to initialize transfer engine";
+            return std::nullopt;
+        }
     }
 
     return client;
