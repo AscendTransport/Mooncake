@@ -102,7 +102,6 @@ struct MemBlock {
 
 struct ConnectionInfo {
     int tcp_socket;
-    int recv_socket;
     std::shared_ptr<hccl::HcclSocket> hccl_ctrl_socket;
     std::shared_ptr<hccl::HcclSocket> hccl_data_socket;
     std::shared_ptr<hccl::TransportMem> transport_mem;
@@ -122,6 +121,8 @@ struct SingleCopyInfo {
 
 extern std::unordered_map<std::string, ConnectionInfo>
     g_target_key_to_connection_map;
+extern std::unordered_map<std::string, ConnectionInfo>
+    g_target_key_to_accept_map;
 extern std::mutex g_map_mtx;
 extern std::vector<MemBlock> g_localBuffer;
 extern int g_epoll_fd_agg;
@@ -141,7 +142,8 @@ extern int createClientSocket(std::shared_ptr<hccl::HcclSocket> &hccl_socket,
 
 extern int createTransportMem(
     RankInfo *local_rank_info, RankInfo *remote_rank_info, std::string key_str,
-    bool is_cross_hccs, std::shared_ptr<hccl::TransportMem> &transport_mem);
+    bool is_cross_hccs, std::shared_ptr<hccl::TransportMem> &transport_mem,
+    bool is_accept);
 
 extern int socketEpollWait();
 

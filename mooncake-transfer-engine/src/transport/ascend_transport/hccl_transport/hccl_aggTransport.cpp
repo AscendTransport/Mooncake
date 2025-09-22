@@ -40,14 +40,16 @@ int HcclTransport::aggTransport(std::vector<Slice *> &slice_list,
     // auto m2 = std::chrono::high_resolution_clock::now();
     for (auto slice : slice_list) {
         localMemPool.emplace_back(
-            reinterpret_cast<uint64_t>(slice->source_addr), slice->length, slice->hccl.dest_addr_type);
-        remoteMemPool.emplace_back(slice->hccl.dest_addr, slice->length, slice->hccl.dest_addr_type);
+            reinterpret_cast<uint64_t>(slice->source_addr), slice->length,
+            slice->hccl.dest_addr_type);
+        remoteMemPool.emplace_back(slice->hccl.dest_addr, slice->length,
+                                   slice->hccl.dest_addr_type);
     }
     // auto m3 = std::chrono::high_resolution_clock::now();
 
-    ret =
-        aggTransportMemTask(&local_rank_info_, &remote_rank_info_, localMemPool,
-                            remoteMemPool, slice_list[0]->opcode, stream, slice_list[0]->hccl.dest_addr_type);
+    ret = aggTransportMemTask(
+        &local_rank_info_, &remote_rank_info_, localMemPool, remoteMemPool,
+        slice_list[0]->opcode, stream, slice_list[0]->hccl.dest_addr_type);
     if (ret) {
         LOG(ERROR)
             << "HcclTransport: aggTransportMemTask error, local devicePhyId: "

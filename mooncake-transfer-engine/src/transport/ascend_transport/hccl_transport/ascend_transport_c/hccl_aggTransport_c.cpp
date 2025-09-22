@@ -113,7 +113,8 @@ int aggTransportMemTransfer(aclrtStream stream) {
     remoteMem.size = req->len;
     transport_mem = g_target_key_to_connection_map[req->key_str].transport_mem;
     int opcode = req->opcode;
-    LOG(ERROR) << "aggTransportMemTransfer addr: " << localMem.addr << ", size:" << localMem.size  << ", op_code:" << opcode;
+    LOG(ERROR) << "aggTransportMemTransfer addr: " << localMem.addr
+               << ", size:" << localMem.size << ", op_code:" << opcode;
 
     int client_socket = g_target_key_to_connection_map[req->key_str].tcp_socket;
     if (req->isMerge == 0 || opcode == WRITE) {
@@ -172,7 +173,7 @@ int aggTransportMemTransfer(aclrtStream stream) {
     }
     LOG(ERROR) << "write or read end:" << opcode;
     g_map_mtx.unlock();
-    
+
     if (req->isMerge == 0) {
         return 0;
     }
@@ -225,30 +226,34 @@ int aggTransportMemTransfer(aclrtStream stream) {
 int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
                         std::vector<MemBlock> &local_memPool,
                         std::vector<MemBlock> &remote_memPool, int opcode,
-                        aclrtStream stream, int mem_type) {                   
+                        aclrtStream stream, int mem_type) {
     int ret = 0;
     std::shared_ptr<hccl::HcclSocket> hccl_ctrl_socket;
     std::shared_ptr<hccl::HcclSocket> hccl_data_socket;
     std::shared_ptr<hccl::TransportMem> transport_mem{};
     // Check if a connection has been established with the peer, and send local
     // information to the peer
-    std::string key_str = std::string(inet_ntoa(remote_rank_info->hostIp)) + '-' +
-                          std::to_string(remote_rank_info->devicePhyId);
+    std::string key_str = std::string(inet_ntoa(remote_rank_info->hostIp)) +
+                          '-' + std::to_string(remote_rank_info->devicePhyId);
     if (mem_type == DDR) {
-        std::string local_key = std::string(inet_ntoa(local_rank_info->hostIp)) + '-' + std::to_string(local_rank_info->devicePhyId);
+        std::string local_key =
+            std::string(inet_ntoa(local_rank_info->hostIp)) + '-' +
+            std::to_string(local_rank_info->devicePhyId);
         // PUT OWN OBJECT / GET OWN OBJECT
         if (local_key == key_str) {
             uint64_t req_len = 0;
             uint64_t mergeAddrWrite = g_localHugeBuffer[0]->memBlock.addr;
             uint64_t mergeAddrRead = g_localHugeBuffer[0]->memBlock.addr;
-            for (uint32_t i = 0; i< local_memPool.size(); i++) {
+            for (uint32_t i = 0; i < local_memPool.size(); i++) {
                 if (opcode == WRITE) {
-                    ret = aclrtMemcpyAsync((void *)mergeAddrWrite, local_memPool[i].len,
-                                        (void *)local_memPool[i].addr, local_memPool[i].len,
-                                        ACL_MEMCPY_DEVICE_TO_DEVICE, stream);
+                    ret = aclrtMemcpyAsync(
+                        (void *)mergeAddrWrite, local_memPool[i].len,
+                        (void *)local_memPool[i].addr, local_memPool[i].len,
+                        ACL_MEMCPY_DEVICE_TO_DEVICE, stream);
                     if (ret != ACL_ERROR_NONE) {
                         LOG(ERROR)
-                            << "Failed to merge data from device to device, ret: "
+                            << "Failed to merge data from device to device, "
+                               "ret: "
                             << ret << ", mergeAddrWrite: " << mergeAddrWrite
                             << ", localMem.addr: " << local_memPool[i].addr;
                         return ret;
@@ -261,38 +266,65 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
             if (opcode == WRITE) {
                 ret = aclrtSynchronizeStream(stream);
                 if (ret != ACL_ERROR_NONE) {
-                    LOG(ERROR) << "Failed to aclrtSynchronizeStream, ret: " << ret;
+                    LOG(ERROR)
+                        << "Failed to aclrtSynchronizeStream, ret: " << ret;
                     return ret;
                 }
-                ret = aclrtMemcpy(reinterpret_cast<void *>(remote_memPool[0].addr), req_len, 
-                                  reinterpret_cast<void *>(mergeAddrWrite), req_len, ACL_MEMCPY_DEVICE_TO_HOST);
+                ret = aclrtMemcpy(
+                    reinterpret_cast<void *>(remote_memPool[0].addr), req_len,
+                    reinterpret_cast<void *>(mergeAddrWrite), req_len,
+                    ACL_MEMCPY_DEVICE_TO_HOST);
                 if (ret != ACL_ERROR_NONE) {
-                    LOG(ERROR) << "Failed to copy data from device to host, ret: " << ret << ", local" << mergeAddrWrite << ", dest:" << remote_memPool[0].addr << ", len:" << req_len;
+                    LOG(ERROR)
+                        << "Failed to copy data from device to host, ret: "
+                        << ret << ", local" << mergeAddrWrite
+                        << ", dest:" << remote_memPool[0].addr
+                        << ", len:" << req_len;
                     return ret;
                 }
-                LOG(INFO) << "PUT: copy data from device to host, ret: "  << ret << ", local" << mergeAddrWrite << ", dest:" << remote_memPool[0].addr << ", len:" << req_len;
+                LOG(INFO) << "PUT: copy data from device to host, ret: " << ret
+                          << ", local" << mergeAddrWrite
+                          << ", dest:" << remote_memPool[0].addr
+                          << ", len:" << req_len;
             } else {
-                ret = aclrtMemcpy(reinterpret_cast<void *>(mergeAddrRead), req_len, 
-                                  reinterpret_cast<void *>(remote_memPool[0].addr), req_len, ACL_MEMCPY_HOST_TO_DEVICE);
+                ret = aclrtMemcpy(
+                    reinterpret_cast<void *>(mergeAddrRead), req_len,
+                    reinterpret_cast<void *>(remote_memPool[0].addr), req_len,
+                    ACL_MEMCPY_HOST_TO_DEVICE);
                 if (ret != ACL_ERROR_NONE) {
-                    LOG(ERROR) << "Failed to copy data from host to device, ret: " << ret << ", local" << local_memPool[0].addr << ", dest:" << mergeAddrRead << ", len:" << req_len;
+                    LOG(ERROR)
+                        << "Failed to copy data from host to device, ret: "
+                        << ret << ", local" << local_memPool[0].addr
+                        << ", dest:" << mergeAddrRead << ", len:" << req_len;
                     return ret;
                 }
-                LOG(INFO) << "GET: copy data from host to device, ret: " << ret << ", local" << local_memPool[0].addr << ", dest:" << mergeAddrRead << ", len:" << req_len;
-                for (uint32_t i = 0; i< local_memPool.size(); i++) {
-                    ret = aclrtMemcpyAsync((void *)local_memPool[i].addr, local_memPool[i].len,
-                                        (void *)mergeAddrRead, local_memPool[i].len,
-                                        ACL_MEMCPY_DEVICE_TO_DEVICE, stream);
+                LOG(INFO) << "GET: copy data from host to device, ret: " << ret
+                          << ", local" << local_memPool[0].addr
+                          << ", dest:" << mergeAddrRead << ", len:" << req_len;
+                for (uint32_t i = 0; i < local_memPool.size(); i++) {
+                    ret = aclrtMemcpyAsync(
+                        (void *)local_memPool[i].addr, local_memPool[i].len,
+                        (void *)mergeAddrRead, local_memPool[i].len,
+                        ACL_MEMCPY_DEVICE_TO_DEVICE, stream);
                     if (ret != ACL_ERROR_NONE) {
-                        LOG(ERROR) << "Failed to copy data from device to device, ret: " << ret << ", local" << mergeAddrRead << ", dest:" << local_memPool[i].addr << ", len:" << local_memPool[i].len;
+                        LOG(ERROR) << "Failed to copy data from device to "
+                                      "device, ret: "
+                                   << ret << ", local" << mergeAddrRead
+                                   << ", dest:" << local_memPool[i].addr
+                                   << ", len:" << local_memPool[i].len;
                         return ret;
                     }
-                    LOG(INFO) << "GET: copy data from device to device, ret: " << ret << ", local" << mergeAddrRead << ", dest:" << local_memPool[i].addr << ", len:" << local_memPool[i].len;
+                    LOG(INFO)
+                        << "GET: copy data from device to device, ret: " << ret
+                        << ", local" << mergeAddrRead
+                        << ", dest:" << local_memPool[i].addr
+                        << ", len:" << local_memPool[i].len;
                     mergeAddrRead += local_memPool[i].len;
                 }
                 ret = aclrtSynchronizeStream(stream);
                 if (ret != ACL_ERROR_NONE) {
-                    LOG(ERROR) << "Failed to aclrtSynchronizeStream, ret: " << ret;
+                    LOG(ERROR)
+                        << "Failed to aclrtSynchronizeStream, ret: " << ret;
                     return ret;
                 }
             }
@@ -300,7 +332,8 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
         }
     }
     auto iter = g_target_key_to_connection_map.find(key_str);
-    if (iter == g_target_key_to_connection_map.end() || g_target_key_to_connection_map[key_str].tcp_socket <= 0) {
+    if (iter == g_target_key_to_connection_map.end() ||
+        g_target_key_to_connection_map[key_str].tcp_socket <= 0) {
         ret = controlInfoSend(local_rank_info, remote_rank_info);
         if (ret) {
             LOG(ERROR) << "controlInfoSend failed, ret: " << ret;
@@ -338,7 +371,7 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
             hccl_data_socket;
         g_map_mtx.lock();
         ret = createTransportMem(local_rank_info, remote_rank_info, key_str,
-                                 is_cross_hccs, transport_mem);
+                                 is_cross_hccs, transport_mem, false);
         g_map_mtx.unlock();
         if (ret) {
             LOG(ERROR) << "createTransportMem failed, ret: " << ret;
@@ -395,8 +428,7 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
                 false, std::memory_order_release);
         }
 
-        void *mergeAddr =
-            (void *)g_localHugeBuffer[send_index]->memBlock.addr;
+        void *mergeAddr = (void *)g_localHugeBuffer[send_index]->memBlock.addr;
         while (idx < local_memPool.size()) {
             const MemBlock &localMem = local_memPool[idx];
             if (mergeLen + localMem.len > PER_HUGE_BUFFER_SIZE) {
@@ -413,7 +445,9 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
                         << ", localMem.addr: " << localMem.addr;
                     return ret;
                 }
-                LOG(INFO) << "agg mergeAddr:" << mergeAddr << ", local:" << localMem.addr << ", len:" << localMem.len;
+                LOG(INFO) << "agg mergeAddr:" << mergeAddr
+                          << ", local:" << localMem.addr
+                          << ", len:" << localMem.len;
                 mergeAddr = static_cast<char *>(mergeAddr) + localMem.len;
             }
 
@@ -432,21 +466,21 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
             recvIdx = (recvIdx + 2) % HUGE_BUFFER_NUM;
         }
 
-        req->local_addr =
-            (void *)g_localHugeBuffer[send_index]->memBlock.addr;
+        req->local_addr = (void *)g_localHugeBuffer[send_index]->memBlock.addr;
         req->len = mergeLen;
         req->opcode = opcode;
         req->isMerge = 1;
         req->key_str = key_str;
         req->mergeIdx = send_index;
-        LOG(INFO) << "req local addr:" << req->local_addr << ", len:" << mergeLen << ", key:" << key_str << ", index:"<< req->mergeIdx;
+        LOG(INFO) << "req local addr:" << req->local_addr
+                  << ", len:" << mergeLen << ", key:" << key_str
+                  << ", index:" << req->mergeIdx;
         std::unique_lock<std::mutex> lock(g_transfer_mutex);
         g_transferReqList.push(req);
         lock.unlock();
         g_transfer_cond.notify_one();
         mergeLen = 0;
-        send_index =
-            (send_index + 2) % HUGE_BUFFER_NUM;
+        send_index = (send_index + 2) % HUGE_BUFFER_NUM;
     }
     LOG(ERROR) << "g_splitList start";
     if (opcode == READ) {
@@ -470,15 +504,17 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
                     break;
                 }
                 ret = aclrtMemcpyAsync((void *)localMem.addr, localMem.len,
-                                    mergeAddr, localMem.len,
-                                    ACL_MEMCPY_DEVICE_TO_DEVICE, stream);
+                                       mergeAddr, localMem.len,
+                                       ACL_MEMCPY_DEVICE_TO_DEVICE, stream);
                 if (ret != ACL_ERROR_NONE) {
                     LOG(ERROR)
                         << "Failed to split data from device to device, ret: "
                         << ret;
                     return ret;
                 }
-                LOG(INFO) << "mergeAddr to addr, localMem:" << localMem.addr <<", mergeAddr:" << mergeAddr << ", len:" << localMem.len;
+                LOG(INFO) << "mergeAddr to addr, localMem:" << localMem.addr
+                          << ", mergeAddr:" << mergeAddr
+                          << ", len:" << localMem.len;
 
                 mergeAddr = static_cast<char *>(mergeAddr) + localMem.len;
                 mergeLen += localMem.len;
@@ -543,10 +579,12 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
 static int recvMemInfo(int client_socket, aclrtStream stream) {
     int ret = 0;
     int opcode, mem_num, recv_mem_type;
-    int a = recv(client_socket, &recv_mem_type, sizeof(recv_mem_type), MSG_WAITALL);
+    int a =
+        recv(client_socket, &recv_mem_type, sizeof(recv_mem_type), MSG_WAITALL);
     if (a != sizeof(recv_mem_type)) {
         LOG(ERROR) << "Failed to receive recv_mem_type type, ret: " << ret
-                   << ", errno: " << errno << ", error: " << strerror(errno) << ", a:" << a;
+                   << ", errno: " << errno << ", error: " << strerror(errno)
+                   << ", a:" << a;
         return -1;
     }
     LOG(INFO) << "recvMemInfo to receive recv_mem_type type:" << recv_mem_type;
@@ -558,8 +596,8 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
     }
     LOG(INFO) << "recvMemInfo to receive mem_num:" << mem_num;
 
-    uint64_t total_len =
-        sizeof(int) + sizeof(mem_num) + sizeof(int) + mem_num * sizeof(MemBlock);
+    uint64_t total_len = sizeof(int) + sizeof(mem_num) + sizeof(int) +
+                         mem_num * sizeof(MemBlock);
 
     struct iovec iov[2];
     iov[0].iov_base = &opcode;
@@ -575,7 +613,8 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
     msg.msg_iovlen = 2;
 
     uint64_t already_received = 0;
-    while (already_received < total_len - sizeof(recv_mem_type)- sizeof(mem_num)) {
+    while (already_received <
+           total_len - sizeof(recv_mem_type) - sizeof(mem_num)) {
         ret = recvmsg(client_socket, &msg, 0);
         if (ret <= 0) {
             LOG(ERROR) << "Failed to receive msg, ret: " << ret
@@ -621,13 +660,14 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
     int ready = 0;
     while (idx < receivedMemPool.size()) {
         uint64_t mergeLen = 0;
-        void *mergeAddr =
-            (void *)g_localHugeBuffer[recv_index]->memBlock.addr;
-        
-        while (!g_localHugeBuffer[recv_index]->freed.load(std::memory_order_acquire)) {
+        void *mergeAddr = (void *)g_localHugeBuffer[recv_index]->memBlock.addr;
+
+        while (!g_localHugeBuffer[recv_index]->freed.load(
+            std::memory_order_acquire)) {
             std::this_thread::yield();
         }
-        g_localHugeBuffer[recv_index]->freed.store(false, std::memory_order_release);
+        g_localHugeBuffer[recv_index]->freed.store(false,
+                                                   std::memory_order_release);
         if (opcode == READ) {
             while (idx < receivedMemPool.size()) {
                 auto &block = receivedMemPool[idx];
@@ -635,18 +675,20 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
                     break;
                 }
                 if (recv_mem_type == HBM) {
-                    ret = aclrtMemcpyAsync(mergeAddr, block.len, (void *)block.addr,
-                                        block.len, ACL_MEMCPY_DEVICE_TO_DEVICE,
-                                        stream);
+                    ret = aclrtMemcpyAsync(mergeAddr, block.len,
+                                           (void *)block.addr, block.len,
+                                           ACL_MEMCPY_DEVICE_TO_DEVICE, stream);
                     if (ret != ACL_ERROR_NONE) {
-                        LOG(ERROR)
-                            << "Failed to merge data from device to device, ret: "
-                            << ret;
+                        LOG(ERROR) << "Failed to merge data from device to "
+                                      "device, ret: "
+                                   << ret;
                         return ret;
                     }
-                    LOG(INFO) << "POOLING RECV D2D mergeAddr:" << mergeAddr << ", block_addr:" << block.addr << ", len" << block.len;
+                    LOG(INFO) << "POOLING RECV D2D mergeAddr:" << mergeAddr
+                              << ", block_addr:" << block.addr << ", len"
+                              << block.len;
                     mergeAddr = static_cast<char *>(mergeAddr) + block.len;
-                } 
+                }
                 idx++;
                 mergeLen += block.len;
             }
@@ -654,23 +696,26 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
             if (recv_mem_type == HBM) {
                 ret = aclrtSynchronizeStream(stream);
                 if (ret != ACL_ERROR_NONE) {
-                    LOG(ERROR) << "Failed to aclrtSynchronizeStream, ret: " << ret;
+                    LOG(ERROR)
+                        << "Failed to aclrtSynchronizeStream, ret: " << ret;
                     return ret;
                 }
             } else {
-                ret = aclrtMemcpy(mergeAddr, mergeLen, (void *)receivedMemPool[0].addr,
-                                  mergeLen, ACL_MEMCPY_HOST_TO_DEVICE);
+                ret = aclrtMemcpy(mergeAddr, mergeLen,
+                                  (void *)receivedMemPool[0].addr, mergeLen,
+                                  ACL_MEMCPY_HOST_TO_DEVICE);
                 if (ret != ACL_ERROR_NONE) {
                     LOG(ERROR)
                         << "Failed to merge data from device to device, ret: "
                         << ret;
                     return ret;
                 }
-                LOG(INFO) << "POOLING RECV H2D mergeAddr:" << mergeAddr << ", block_addr:" << receivedMemPool[0].addr << ", len:" << mergeLen;
+                LOG(INFO) << "POOLING RECV H2D mergeAddr:" << mergeAddr
+                          << ", block_addr:" << receivedMemPool[0].addr
+                          << ", len:" << mergeLen;
             }
 
-            uint64_t base_addr =
-                g_localHugeBuffer[recv_index]->memBlock.addr;
+            uint64_t base_addr = g_localHugeBuffer[recv_index]->memBlock.addr;
             ret = send(client_socket, &base_addr, sizeof(uint64_t), 0);
             if (ret < 0) {
                 LOG(ERROR) << "Failed to send base_addr to remote, ret: " << ret
@@ -682,8 +727,8 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
             ret = recv(client_socket, &ready, sizeof(int), MSG_WAITALL);
             if (ret <= 0) {
                 LOG(ERROR) << "Failed to receive ready write, ret: " << ret
-                        << ", errno: " << errno
-                        << ", error: " << strerror(errno);
+                           << ", errno: " << errno
+                           << ", error: " << strerror(errno);
                 return -1;
             }
             LOG(INFO) << "RECV ready addr:" << base_addr;
@@ -702,16 +747,18 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
                     break;
                 }
                 if (recv_mem_type == HBM) {
-                    ret = aclrtMemcpyAsync((void *)block.addr, block.len, mergeAddr,
-                                        block.len, ACL_MEMCPY_DEVICE_TO_DEVICE,
-                                        stream);
+                    ret = aclrtMemcpyAsync((void *)block.addr, block.len,
+                                           mergeAddr, block.len,
+                                           ACL_MEMCPY_DEVICE_TO_DEVICE, stream);
                     if (ret != ACL_ERROR_NONE) {
-                        LOG(ERROR)
-                            << "Failed to split data from device to device, ret: "
-                            << ret;
+                        LOG(ERROR) << "Failed to split data from device to "
+                                      "device, ret: "
+                                   << ret;
                         return ret;
                     }
-                    LOG(INFO) << "POOLING RECV D2D mergeAddr:" << mergeAddr << ", block_addr:" << block.addr << ", len" << block.len;
+                    LOG(INFO) << "POOLING RECV D2D mergeAddr:" << mergeAddr
+                              << ", block_addr:" << block.addr << ", len"
+                              << block.len;
                     mergeAddr = static_cast<char *>(mergeAddr) + block.len;
                 }
                 idx++;
@@ -720,29 +767,36 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
             if (recv_mem_type == HBM) {
                 ret = aclrtSynchronizeStream(stream);
                 if (ret != ACL_ERROR_NONE) {
-                    LOG(ERROR) << "Failed to aclrtSynchronizeStream, ret: " << ret;
+                    LOG(ERROR)
+                        << "Failed to aclrtSynchronizeStream, ret: " << ret;
                     return ret;
                 }
             } else {
-                ret = aclrtMemcpy((void *)receivedMemPool[0].addr, mergeLen, mergeAddr,
-                                    mergeLen, ACL_MEMCPY_DEVICE_TO_HOST);
+                ret =
+                    aclrtMemcpy((void *)receivedMemPool[0].addr, mergeLen,
+                                mergeAddr, mergeLen, ACL_MEMCPY_DEVICE_TO_HOST);
                 if (ret != ACL_ERROR_NONE) {
                     LOG(ERROR)
                         << "Failed to merge data from device to device, ret: "
                         << ret;
                     return ret;
                 }
-                LOG(INFO) << "POOLING RECV D2H mergeAddr:" << mergeAddr << ", block_addr:" << receivedMemPool[0].addr << ", len" << mergeLen;
+                LOG(INFO) << "POOLING RECV D2H mergeAddr:" << mergeAddr
+                          << ", block_addr:" << receivedMemPool[0].addr
+                          << ", len" << mergeLen;
             }
         }
 
-        ret = g_localHugeBuffer[recv_index]->freed.load(std::memory_order_acquire);
+        ret = g_localHugeBuffer[recv_index]->freed.load(
+            std::memory_order_acquire);
         if (ret) {
-            LOG(ERROR) << "Error: Object at index " << recv_index << " has been freed!";
+            LOG(ERROR) << "Error: Object at index " << recv_index
+                       << " has been freed!";
             return ret;
         }
-        g_localHugeBuffer[recv_index]->freed.store(true, std::memory_order_release);
-        recv_index = (recv_index + 2) % HUGE_BUFFER_NUM;  
+        g_localHugeBuffer[recv_index]->freed.store(true,
+                                                   std::memory_order_release);
+        recv_index = (recv_index + 2) % HUGE_BUFFER_NUM;
     }
 
     if (opcode == WRITE) {

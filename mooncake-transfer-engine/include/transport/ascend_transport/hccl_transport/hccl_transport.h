@@ -102,6 +102,7 @@ class HcclTransport : public Transport {
     void aggTargetLoop(
         int deviceLogicId);  // Thread logic for target aggregation/splitting
     void targetLoop(int deviceLogicId);
+
    private:
     bool aggregateEnabled_;
     std::atomic_bool running_;
