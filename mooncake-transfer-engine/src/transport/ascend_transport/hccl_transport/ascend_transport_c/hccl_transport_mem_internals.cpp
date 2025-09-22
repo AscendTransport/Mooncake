@@ -344,13 +344,13 @@ int controlInfoSend(RankInfo *local_rank_info, RankInfo *remote_rank_info) {
                    << ", errno: " << errno << ", error: " << strerror(errno);
         return ret;
     }
-    int ack;
-    ret = recv(client_socket, &ack, sizeof(int), MSG_WAITALL);
-    if (ret <= 0) {
-        LOG(ERROR) << "recv failed, ret: " << ret << ", errno: " << errno
-                   << ", error: " << strerror(errno);
-        return ret;
-    }
+    // int ack;
+    // ret = recv(client_socket, &ack, sizeof(int), MSG_WAITALL);
+    // if (ret <= 0) {
+    //     LOG(ERROR) << "recv failed, ret: " << ret << ", errno: " << errno
+    //                << ", error: " << strerror(errno);
+    //     return ret;
+    // }
     g_target_key_to_connection_map[key_str].tcp_socket = client_socket;
     LOG(INFO) << "target_key:" << key_str << ", tcp_socket:" << client_socket;
 

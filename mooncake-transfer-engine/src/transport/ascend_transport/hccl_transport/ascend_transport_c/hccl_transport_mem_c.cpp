@@ -454,13 +454,13 @@ int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled) {
                    << ", errno: " << errno << ", error: " << strerror(errno);
         return -1;
     }
-    int ack = 1;
-    ret = send(recv_socket, &ack, sizeof(int), 0);
-    if (ret < 0) {
-        LOG(ERROR) << "Failed to send ack, ret: " << ret << ", errno: " << errno
-                   << ", error: " << strerror(errno);
-        return -1;
-    }
+    // int ack = 1;
+    // ret = send(recv_socket, &ack, sizeof(int), 0);
+    // if (ret < 0) {
+    //     LOG(ERROR) << "Failed to send ack, ret: " << ret << ", errno: " << errno
+    //                << ", error: " << strerror(errno);
+    //     return -1;
+    // }
     // RankControlInfo remote_control_info;
     // ret = recv(recv_socket, &remote_control_info, sizeof(RankControlInfo),
     // 0); if (ret <= 0) {
@@ -593,6 +593,13 @@ int transportMemAccept(RankInfo *local_rank_info, bool aggregateEnabled) {
             LOG(ERROR) << "epoll_ctl: ADD";
             return -1;
         }
+    }
+    int ack = 1;
+    ret = send(recv_socket, &ack, sizeof(int), 0);
+    if (ret < 0) {
+        LOG(ERROR) << "Failed to send ack, ret: " << ret << ", errno: " << errno
+                   << ", error: " << strerror(errno);
+        return -1;
     }
     return 0;
 }
