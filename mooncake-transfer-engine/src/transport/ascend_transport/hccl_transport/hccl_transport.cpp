@@ -208,10 +208,10 @@ int HcclTransport::nonAggTransport(std::vector<Slice *> &slice_list,
         (void)taskDispatch;
         (void)stop;
     }
-    LOG(INFO) << "pid: " << pid << ", target hostIp: " << remoteIp
-              << ", local devicePhyId: " << local_rank_info_.devicePhyId
-              << ", target devicePhyId: " << remote_rank_info_.devicePhyId
-              << ", slice end";
+    // LOG(INFO) << "pid: " << pid << ", target hostIp: " << remoteIp
+    //           << ", local devicePhyId: " << local_rank_info_.devicePhyId
+    //           << ", target devicePhyId: " << remote_rank_info_.devicePhyId
+    //           << ", slice end";
     return 0;
 }
 
@@ -490,21 +490,23 @@ int HcclTransport::install(std::string &local_server_name,
             return ret;
         }
 
-        void *devAddr = nullptr;
-        ret = aclrtMalloc(&devAddr, TOTAL_AGG_DEV_SIZE,
-                          ACL_MEM_MALLOC_NORMAL_ONLY);
-        if (ret != ACL_ERROR_NONE) {
-            LOG(ERROR) << "Failed to allocate device memory, ret:" << ret;
-            return ret;
-        }
+        for (size_t i = 0; i < HUGE_BUFFER_NUM; i++) {
+            void *devAddr = nullptr;
+            ret = aclrtMalloc(&devAddr, PER_HUGE_BUFFER_SIZE,
+                              ACL_MEM_MALLOC_NORMAL_ONLY);
+            if (ret != ACL_ERROR_NONE) {
+                LOG(ERROR) << "Failed to allocate device memory, ret:" << ret;
+                return ret;
+            }
 
-        const uint64_t alignment = 1 << 21;
-        if ((uint64_t)devAddr % alignment != 0) {
-            LOG(ERROR) << "The Merge malloc address is not 2M aligned.";
-            return -1;
-        }
+            const uint64_t alignment = 1 << 21;
+            if ((uint64_t)devAddr % alignment != 0) {
+                LOG(ERROR) << "The Merge malloc address is not 2M aligned.";
+                return -1;
+            }
 
-        aggRegLocalMem((uint64_t)devAddr, TOTAL_AGG_DEV_SIZE, true);
+            aggRegLocalMem((uint64_t)devAddr, PER_HUGE_BUFFER_SIZE, true);
+        }
     } else {
         ret = startNonAggThreads();
         if (ret) {
@@ -634,17 +636,17 @@ int HcclTransport::registerLocalMemory(void *addr, size_t length,
 
     int ret;
     if (location == "cpu") {
-        LOG(ERROR) << "HcclTransport: registerLocalMemory: " << addr
-                   << ", length:" << length;
-        void *dev_addr = NULL;
-        ret = aclrtMalloc(&dev_addr, g_transfer_dev_len,
-                          ACL_MEM_MALLOC_NORMAL_ONLY);
-        if (ret != ACL_ERROR_NONE) {
-            LOG(ERROR) << "failed to allocate device memory len:"
-                       << g_transfer_dev_len;
-            return ret;
-        }
+        LOG(INFO) << "HcclTransport: registerLocalMemory: " << addr
+                  << ", length:" << length;
         if (!aggregateEnabled_) {
+            void *dev_addr = NULL;
+            ret = aclrtMalloc(&dev_addr, g_transfer_dev_len,
+                              ACL_MEM_MALLOC_NORMAL_ONLY);
+            if (ret != ACL_ERROR_NONE) {
+                LOG(ERROR) << "failed to allocate device memory len:"
+                           << g_transfer_dev_len;
+                return ret;
+            }
             nonAggRegLocalMem((uint64_t)dev_addr, g_transfer_dev_len, true);
         }
     } else {

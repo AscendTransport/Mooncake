@@ -542,14 +542,22 @@ int createTransportMem(RankInfo *local_rank_info, RankInfo *remote_rank_info,
         return ret;
     }
     LOG(INFO) << "transport_mem connect success";
-    uint32_t m_num = g_localBuffer.size();
+    uint32_t m_num = g_localBuffer.size() - HUGE_BUFFER_NUM / 2;
+    LOG(INFO) << "m_num: " << m_num;
     std::vector<hccl::TransportMem::RmaMemDesc> rmaMemDescs(m_num);
 
-    for (uint32_t i = 0; i < m_num; ++i) {
+    uint32_t idx;
+    if (is_accept) {
+        idx = 1;
+    } else {
+        idx = 0;
+    }
+
+    for (uint32_t i = 0; i < m_num; i++) {
         HcclMem mem;
         HcclBuf buf;
-        mem.addr = (void *)g_localBuffer[i].addr;
-        mem.size = g_localBuffer[i].len;
+        mem.addr = (void *)g_localBuffer[idx].addr;
+        mem.size = g_localBuffer[idx].len;
         mem.type = HCCL_MEM_TYPE_DEVICE;
         if (!is_cross_hccs) {
             ret = HcclMemReg(vnicNetDevCtx_, &mem, &buf);
@@ -593,6 +601,11 @@ int createTransportMem(RankInfo *local_rank_info, RankInfo *remote_rank_info,
                            << ", addr: " << mem.addr << ", len: " << mem.size;
                 return ret;
             }
+        }
+        if (idx < (HUGE_BUFFER_NUM - 1)) {
+            idx += 2;
+        } else {
+            idx++;
         }
     }
     hccl::TransportMem::RmaMemDescs localRmaMemDescs;

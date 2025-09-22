@@ -38,8 +38,6 @@ std::queue<int> g_splitList;
 std::vector<std::unique_ptr<HugeBuffer>> g_localHugeBuffer;
 std::vector<uint64_t> g_localMemtoSend;
 
-int g_hugeBufferIdx = 0;
-
 static int sendMemInfo(int client_socket, const std::vector<MemBlock> &memPool,
                        int opcode) {
     static const uint64_t kHdrLen = sizeof(opcode) + sizeof(int) + sizeof(int);
@@ -875,14 +873,11 @@ void aggRegLocalMem(uint64_t addr, uint64_t length, bool isAggBuffer) {
     g_localBuffer.emplace_back(memBlock);
 
     if (isAggBuffer) {
-        for (uint64_t i = 0; i < HUGE_BUFFER_NUM; ++i) {
-            MemBlock perHugeBuf;
-            perHugeBuf.addr = addr;
-            perHugeBuf.len = PER_HUGE_BUFFER_SIZE;
-            g_localMemtoSend.emplace_back(addr);
-            g_localHugeBuffer.emplace_back(new HugeBuffer(perHugeBuf, true));
-            addr = addr + PER_HUGE_BUFFER_SIZE;
-        }
+        MemBlock perHugeBuf;
+        perHugeBuf.addr = addr;
+        perHugeBuf.len = PER_HUGE_BUFFER_SIZE;
+        g_localMemtoSend.emplace_back(addr);
+        g_localHugeBuffer.emplace_back(new HugeBuffer(perHugeBuf, true));
     }
 
     return;

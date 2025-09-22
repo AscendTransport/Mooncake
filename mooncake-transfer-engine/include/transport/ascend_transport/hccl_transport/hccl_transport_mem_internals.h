@@ -47,6 +47,9 @@ extern "C" {
 #define MAX_EVENTS 32
 #define CONNECT_MAX 1000
 #define HCCL_RETRY_TIMES 3
+#define TOTAL_AGG_DEV_SIZE 0x4000000
+#define PER_HUGE_BUFFER_SIZE 0x2000000
+#define HUGE_BUFFER_NUM 2
 
 struct RankControlInfo {
     uint64_t deviceLogicId;

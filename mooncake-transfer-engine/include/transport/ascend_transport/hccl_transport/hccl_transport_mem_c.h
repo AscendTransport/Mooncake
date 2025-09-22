@@ -28,9 +28,6 @@ extern "C" {
 #define DDR 0
 #define HBM 1
 #define VECTOR_RESERVE_SIZE 200
-#define TOTAL_AGG_DEV_SIZE 0x4000000
-#define PER_HUGE_BUFFER_SIZE 0x2000000
-#define HUGE_BUFFER_NUM 2
 #define BLOCK_AGGREGATION_THRESHOLD 0x40000
 
 /* Public External Interface */

@@ -705,7 +705,7 @@ void nonAggRegLocalMem(uint64_t addr, uint64_t length, bool is_pool) {
     MemBlock memBlock;
     memBlock.addr = addr;
     memBlock.len = length;
-    LOG(ERROR) << "addr:" << addr << ", len: " << length
+    LOG(INFO) << "addr:" << addr << ", len: " << length
                << ", is_pool:" << is_pool;
     g_localBuffer.emplace_back(memBlock);
     return;
