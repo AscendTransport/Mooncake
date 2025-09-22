@@ -122,6 +122,7 @@ struct SingleCopyInfo {
 
 extern std::unordered_map<std::string, ConnectionInfo>
     g_target_key_to_connection_map;
+extern std::mutex g_map_mtx;
 extern std::vector<MemBlock> g_localBuffer;
 extern int g_epoll_fd_agg;
 extern int g_epoll_fd_target;

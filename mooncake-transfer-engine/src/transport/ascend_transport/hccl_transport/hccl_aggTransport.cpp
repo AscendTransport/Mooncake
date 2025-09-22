@@ -127,22 +127,22 @@ void HcclTransport::aggInitiatorLoop(int deviceLogicId) {
             LOG(ERROR) << "HcclTransport: empty transfer request batch";
         }
         bool isAgg = true;
-        if (slice_list[0]->hccl.dest_addr_type != 0) {
-            size_t minLen = slice_list[0]->length;
-            size_t maxLen = slice_list[0]->length;
-            for (auto slice : slice_list) {
-                minLen = std::min(minLen, slice->length);
-                maxLen = std::max(maxLen, slice->length);
-                if (maxLen > PER_HUGE_BUFFER_SIZE) {
-                    isAgg = false;
-                    break;
-                }
-            }
+        // if (slice_list[0]->hccl.dest_addr_type != 0) {
+        //     size_t minLen = slice_list[0]->length;
+        //     size_t maxLen = slice_list[0]->length;
+        //     for (auto slice : slice_list) {
+        //         minLen = std::min(minLen, slice->length);
+        //         maxLen = std::max(maxLen, slice->length);
+        //         if (maxLen > PER_HUGE_BUFFER_SIZE) {
+        //             isAgg = false;
+        //             break;
+        //         }
+        //     }
 
-            if (minLen > BLOCK_AGGREGATION_THRESHOLD) {
-                isAgg = false;
-            }
-        }
+        //     if (minLen > BLOCK_AGGREGATION_THRESHOLD) {
+        //         isAgg = false;
+        //     }
+        // }
 
         if (!isAgg) {
             ret = nonAggTransport(slice_list, stream);

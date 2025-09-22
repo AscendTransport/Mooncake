@@ -148,6 +148,7 @@ int initServerNetSocket(RankInfo *local_rank_info) {
 // The out-of-band socket on the host side that ascend_transport depends on,
 // used to convey control information such as deviceId and deviceIp
 int initControlSocket(RankInfo *local_rank_info, bool aggregateEnabled) {
+    g_target_key_to_connection_map.clear();
     int ret = 0;
     g_server_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (g_server_socket < 0) {
@@ -290,7 +291,7 @@ static int connectToTarget(std::string target_ip, int target_port) {
 
 int controlInfoSend(RankInfo *local_rank_info, RankInfo *remote_rank_info) {
     int ret = 0;
-    std::string key_str = inet_ntoa(remote_rank_info->hostIp) +
+    std::string key_str = std::string(inet_ntoa(remote_rank_info->hostIp)) + '-' +
                           std::to_string(remote_rank_info->devicePhyId);
     LOG(INFO) << "aggTransportMemTask local_rank_info rankId: "
               << local_rank_info->rankId
@@ -340,6 +341,13 @@ int controlInfoSend(RankInfo *local_rank_info, RankInfo *remote_rank_info) {
                    << ", errno: " << errno << ", error: " << strerror(errno);
         return ret;
     }
+    int ack;
+    ret = recv(client_socket, &ack, sizeof(int), MSG_WAITALL);
+    if (ret <= 0) {
+        LOG(ERROR) << "recv failed, ret: " << ret
+                   << ", errno: " << errno << ", error: " << strerror(errno);
+        return ret;
+    }
     g_target_key_to_connection_map[key_str].tcp_socket = client_socket;
     // g_target_key_to_connection_map[key_str].recv_socket = recv_socket;
     LOG(INFO) << "target_key:" << key_str << ", tcp_socket:" << client_socket;
@@ -364,9 +372,9 @@ int createClientSocket(std::shared_ptr<hccl::HcclSocket> &hccl_socket,
                        bool is_cross_hccs, std::string tag) {
     int ret = 0;
     hccl::HcclIpAddress rempoteDevIp;
-    std::string key_str = inet_ntoa(remote_rank_info->hostIp) +
+    std::string key_str = std::string(inet_ntoa(remote_rank_info->hostIp)) + '-' +
                           std::to_string(remote_rank_info->devicePhyId);
-    std::string baseTag_ = inet_ntoa(local_rank_info->hostIp) +
+    std::string baseTag_ = std::string(inet_ntoa(local_rank_info->hostIp)) + '-' +
                            std::to_string(local_rank_info->devicePhyId) +
                            key_str + tag;
     if (!is_cross_hccs) {
