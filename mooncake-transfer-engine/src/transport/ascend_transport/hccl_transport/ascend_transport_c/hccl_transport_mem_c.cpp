@@ -192,9 +192,9 @@ int nonAggTransportMemTask(RankInfo *local_rank_info,
                         << ", len:" << req_len;
                     return ret;
                 }
-                LOG(INFO) << "PUT: copy data from device to host, ret: " << ret
-                          << ", local" << local_mem << ", dest:" << offset
-                          << ", len:" << req_len;
+                // LOG(INFO) << "PUT: copy data from device to host, ret: " << ret
+                //           << ", local" << local_mem << ", dest:" << offset
+                //           << ", len:" << req_len;
                 // print_bfloat16_memory(reinterpret_cast<void *>(offset),
                 // req_len);
                 return ret;
@@ -208,10 +208,10 @@ int nonAggTransportMemTask(RankInfo *local_rank_info,
                            << ", dest:" << offset << ", len:" << req_len;
                 return ret;
             }
-            LOG(INFO) << "GET: copy data from host to device, ret: " << ret
-                      << ", local:" << local_mem << ", dest:" << offset
-                      << ", len:" << req_len;
-            return ret;
+            // LOG(INFO) << "GET: copy data from host to device, ret: " << ret
+            //           << ", local:" << local_mem << ", dest:" << offset
+            //           << ", len:" << req_len;
+            // return ret;
         }
         local_buffer = (uint64_t)g_dev_addr + g_dev_read_offset;
         ret = aclrtMemcpy(reinterpret_cast<void *>(local_buffer), req_len,
@@ -292,10 +292,10 @@ int nonAggTransportMemTask(RankInfo *local_rank_info,
         copy_info.local_id = local_rank_info->devicePhyId;
         copy_info.remote_id = remote_rank_info->devicePhyId;
         copy_info.offset = g_dev_read_offset;
-        LOG(INFO) << "send client:" << client_socket << ", offset:" << offset
-                  << ", local_id:" << local_rank_info->devicePhyId
-                  << ", remote_id:" << remote_rank_info->devicePhyId
-                  << ", offset:" << copy_info.offset << ", len:" << req_len;
+        // LOG(INFO) << "send client:" << client_socket << ", offset:" << offset
+        //           << ", local_id:" << local_rank_info->devicePhyId
+        //           << ", remote_id:" << remote_rank_info->devicePhyId
+        //           << ", offset:" << copy_info.offset << ", len:" << req_len;
         ret = send(client_socket, &copy_info, sizeof(SingleCopyInfo), 0);
         if (ret < 0) {
             LOG(ERROR) << "send copy_info failed, ret: " << ret
@@ -304,9 +304,9 @@ int nonAggTransportMemTask(RankInfo *local_rank_info,
             // close(client_socket);
             return ret;
         }
-        LOG(INFO) << "send ok:"
-                  << ", local_id:" << local_rank_info->devicePhyId
-                  << ", remote_id:" << remote_rank_info->devicePhyId;
+        // LOG(INFO) << "send ok:"
+        //           << ", local_id:" << local_rank_info->devicePhyId
+        //           << ", remote_id:" << remote_rank_info->devicePhyId;
 
         SingleCopyInfo single_copy_info;
         ret = recv(client_socket, &single_copy_info, sizeof(SingleCopyInfo),
@@ -322,11 +322,11 @@ int nonAggTransportMemTask(RankInfo *local_rank_info,
                        << ", error: " << strerror(errno);
             return ret;
         }
-        LOG(INFO) << "recv ok client_socket:" << client_socket
-                  << ", device:" << single_copy_info.device_addr
-                  << ", local_id:" << local_rank_info->devicePhyId
-                  << ", remote_id:" << remote_rank_info->devicePhyId
-                  << ", op_code:" << op_code;
+        // LOG(INFO) << "recv ok client_socket:" << client_socket
+        //           << ", device:" << single_copy_info.device_addr
+        //           << ", local_id:" << local_rank_info->devicePhyId
+        //           << ", remote_id:" << remote_rank_info->devicePhyId
+        //           << ", op_code:" << op_code;
         localMem.addr = (void *)local_buffer;
         remoteMem.addr = (void *)single_copy_info.device_addr;
     }
@@ -374,11 +374,11 @@ int transportMemIntegrate(RankInfo *local_rank_info, RankInfo *remote_rank_info,
         copy_info.local_id = local_rank_info->devicePhyId;
         copy_info.remote_id = remote_rank_info->devicePhyId;
         copy_info.offset = g_dev_write_offset;
-        LOG(INFO) << "put send client:" << client_socket
-                  << " , offset:" << offset
-                  << " , local_id:" << local_rank_info->devicePhyId
-                  << " , remote_id:" << remote_rank_info->devicePhyId
-                  << " , offset:" << g_dev_write_offset << ", len:" << req_len;
+        // LOG(INFO) << "put send client:" << client_socket
+        //           << " , offset:" << offset
+        //           << " , local_id:" << local_rank_info->devicePhyId
+        //           << " , remote_id:" << remote_rank_info->devicePhyId
+        //           << " , offset:" << g_dev_write_offset << ", len:" << req_len;
         ret = send(client_socket, &copy_info, sizeof(SingleCopyInfo), 0);
         if (ret < 0) {
             LOG(ERROR) << "send copy failed, ret: " << ret
@@ -387,10 +387,10 @@ int transportMemIntegrate(RankInfo *local_rank_info, RankInfo *remote_rank_info,
             // close(client_socket);
             return -1;
         }
-        LOG(INFO) << "put send ok client:" << client_socket
-                  << " , offset:" << offset
-                  << " , local_id:" << local_rank_info->devicePhyId
-                  << " , remote_id:" << remote_rank_info->devicePhyId;
+        // LOG(INFO) << "put send ok client:" << client_socket
+        //           << " , offset:" << offset
+        //           << " , local_id:" << local_rank_info->devicePhyId
+        //           << " , remote_id:" << remote_rank_info->devicePhyId;
         SingleCopyInfo status_info;
         ret = recv(client_socket, &status_info, sizeof(SingleCopyInfo),
                    MSG_WAITALL);
@@ -401,10 +401,10 @@ int transportMemIntegrate(RankInfo *local_rank_info, RankInfo *remote_rank_info,
             // close(client_socket);
             return -1;
         }
-        LOG(INFO) << "put recv ok client:" << client_socket
-                  << " , offset:" << offset << " , local_id"
-                  << local_rank_info->devicePhyId << " , remote_id"
-                  << remote_rank_info->devicePhyId;
+        // LOG(INFO) << "put recv ok client:" << client_socket
+        //           << " , offset:" << offset << " , local_id"
+        //           << local_rank_info->devicePhyId << " , remote_id"
+        //           << remote_rank_info->devicePhyId;
         g_dev_write_offset += req_len;
         return 0;
     } else {
@@ -418,9 +418,9 @@ int transportMemIntegrate(RankInfo *local_rank_info, RankInfo *remote_rank_info,
                        << ", dest:" << local_mem << ", len:" << req_len;
             return ret;
         }
-        LOG(INFO) << "Get to copy data from device to device, ret: " << ret
-                  << ", local" << local_buffer << ", dest:" << local_mem
-                  << ", len:" << req_len;
+        // LOG(INFO) << "Get to copy data from device to device, ret: " << ret
+        //           << ", local" << local_buffer << ", dest:" << local_mem
+        //           << ", len:" << req_len;
     }
     g_dev_write_offset += req_len;
     return 0;
@@ -606,11 +606,11 @@ int recvMemInfo1(int client_socket, aclrtStream stream) {
                    << ", errno: " << errno << ", error: " << strerror(errno);
         return -1;
     }
-    LOG(INFO) << "recv host addr:" << single_copy_info.host_addr
-              << " , client_socket" << client_socket << " , local_id"
-              << single_copy_info.remote_id << " , remote_id"
-              << single_copy_info.local_id << ", offset"
-              << single_copy_info.offset << ", len:" << single_copy_info.len;
+    // LOG(INFO) << "recv host addr:" << single_copy_info.host_addr
+    //           << " , client_socket" << client_socket << " , local_id"
+    //           << single_copy_info.remote_id << " , remote_id"
+    //           << single_copy_info.local_id << ", offset"
+    //           << single_copy_info.offset << ", len:" << single_copy_info.len;
     uint64_t device_addr =
         reinterpret_cast<uint64_t>(g_dev_addr) + single_copy_info.offset;
     if (single_copy_info.is_read) {
@@ -624,9 +624,9 @@ int recvMemInfo1(int client_socket, aclrtStream stream) {
                            << ret;
                 return ret;
             }
-            LOG(INFO) << "remote read ok:" << "device_addr:" << device_addr
-                      << ", host:" << single_copy_info.host_addr
-                      << ", len:" << single_copy_info.len;
+            // LOG(INFO) << "remote read ok:" << "device_addr:" << device_addr
+            //           << ", host:" << single_copy_info.host_addr
+            //           << ", len:" << single_copy_info.len;
             // print_bfloat16_memory(reinterpret_cast<void
             // *>(single_copy_info.host_addr), single_copy_info.len);
         }
@@ -641,16 +641,16 @@ int recvMemInfo1(int client_socket, aclrtStream stream) {
                            << ret;
                 return ret;
             }
-            LOG(INFO) << "remote put ok:" << "device_addr:" << device_addr
-                      << ", host:" << single_copy_info.host_addr
-                      << ", len:" << single_copy_info.len;
+            // LOG(INFO) << "remote put ok:" << "device_addr:" << device_addr
+            //           << ", host:" << single_copy_info.host_addr
+            //           << ", len:" << single_copy_info.len;
         }
     }
     SingleCopyInfo single_copy_infos;
     single_copy_infos.device_addr = device_addr;
-    LOG(INFO) << "send device addr:" << device_addr << " , client_socket"
-              << client_socket << " , local_id" << single_copy_info.remote_id
-              << " , remote_id" << single_copy_info.local_id;
+    // LOG(INFO) << "send device addr:" << device_addr << " , client_socket"
+    //           << client_socket << " , local_id" << single_copy_info.remote_id
+    //           << " , remote_id" << single_copy_info.local_id;
     ret = send(client_socket, &single_copy_infos, sizeof(SingleCopyInfo), 0);
     if (ret < 0) {
         LOG(ERROR) << "send to receive single_copy_info, ret: " << ret
