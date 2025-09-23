@@ -456,7 +456,7 @@ int HcclTransport::install(std::string &local_server_name,
                 LOG(ERROR) << "The Merge malloc address is not 2M aligned.";
                 return -1;
         }
-            aggRegLocalMem((uint64_t)devAddr, TOTAL_AGG_DEV_SIZE, true);
+            aggRegLocalMem((uint64_t)devAddr, PER_HUGE_BUFFER_SIZE, true);
         }
     } else {
         ret = startNonAggThreads();
@@ -530,8 +530,6 @@ Status HcclTransport::submitTransferTask(
         slice->opcode = request.opcode;
         slice->hccl.dest_addr = request.target_offset;
         slice->hccl.dest_addr_type = request.target_offset_type;
-        // LOG(ERROR) << "HcclTransport: submitTransferTask type: "
-        //            << slice->hccl.dest_addr_type;
         slice->task = &task;
         slice->target_id = request.target_id;
         slice->status = Slice::PENDING;
