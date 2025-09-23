@@ -651,7 +651,9 @@ int HcclTransport::registerLocalMemory(void *addr, size_t length,
         }
     } else {
         if (aggregateEnabled_) {
-            aggRegLocalMem(buffer_desc.addr, buffer_desc.length, false);
+            ret = 0;
+            // 强制开聚合，这里不注册内存
+            // aggRegLocalMem(buffer_desc.addr, buffer_desc.length, false);
         } else {
             nonAggRegLocalMem(buffer_desc.addr, buffer_desc.length, false);
         }
