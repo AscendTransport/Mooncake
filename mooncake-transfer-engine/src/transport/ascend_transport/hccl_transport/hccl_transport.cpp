@@ -544,8 +544,8 @@ Status HcclTransport::submitTransfer(
         slice->opcode = request.opcode;
         slice->hccl.dest_addr = request.target_offset;
         slice->hccl.dest_addr_type = request.target_offset_type;
-        LOG(ERROR) << "HcclTransport: submitTransfer type: "
-                   << slice->hccl.dest_addr_type;
+        // LOG(ERROR) << "HcclTransport: submitTransfer type: "
+        //            << slice->hccl.dest_addr_type;
         slice->task = &task;
         slice->target_id = request.target_id;
         slice->status = Slice::PENDING;
@@ -579,8 +579,8 @@ Status HcclTransport::submitTransferTask(
         slice->opcode = request.opcode;
         slice->hccl.dest_addr = request.target_offset;
         slice->hccl.dest_addr_type = request.target_offset_type;
-        LOG(ERROR) << "HcclTransport: submitTransferTask type: "
-                   << slice->hccl.dest_addr_type;
+        // LOG(ERROR) << "HcclTransport: submitTransferTask type: "
+        //            << slice->hccl.dest_addr_type;
         slice->task = &task;
         slice->target_id = request.target_id;
         slice->status = Slice::PENDING;

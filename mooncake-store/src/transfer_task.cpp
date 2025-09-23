@@ -508,9 +508,9 @@ std::optional<TransferFuture> TransferSubmitter::submitTransferEngineOperation(
             LOG(ERROR) << "Failed to open segment " << handle.segment_name_;
             return std::nullopt;
         }
-        LOG(INFO) << "Transfer Engine, parseHostNameWithPortAscend, Server:" << host_name << ", port"
-                  << port << ", device_id" << device_id << ", source:" << slice.ptr << ", target_id:" << seg
-                  << ", target_offset" << handle.buffer_address_ << ", length:" << slice.size;
+        // LOG(INFO) << "Transfer Engine, parseHostNameWithPortAscend, Server:" << host_name << ", port"
+        //           << port << ", device_id" << device_id << ", source:" << slice.ptr << ", target_id:" << seg
+        //           << ", target_offset" << handle.buffer_address_ << ", length:" << slice.size;
         Transport::TransferRequest request;
         request.opcode = op_code;
         request.source = static_cast<char*>(slice.ptr);

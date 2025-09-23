@@ -30,13 +30,13 @@ int64_t to_py_ret(const tl::expected<T, ErrorCode> &exp) noexcept {
     }
 
     if constexpr (std::is_void_v<T>) {
-        LOG(WARNING) << "is_void_v";
+        // LOG(WARNING) << "is_void_v";
         return 0;
     } else if constexpr (std::is_integral_v<T>) {
-        LOG(WARNING) << "is_integral bane";
+        // LOG(WARNING) << "is_integral bane";
         return static_cast<int64_t>(exp.value());
     } else {
-        LOG(WARNING) << "Unsupported payload type in to_py_ret()";
+        // LOG(WARNING) << "Unsupported payload type in to_py_ret()";
         static_assert(!sizeof(T), "Unsupported payload type in to_py_ret()");
     }
 }

@@ -646,7 +646,7 @@ std::vector<PutOperation> Client::CreatePutOperations(
     ops.reserve(keys.size());
     for (size_t i = 0; i < keys.size(); ++i) {
         ops.emplace_back(keys[i], batched_slices[i]);
-        LOG(ERROR) << "batched_slices size: " << batched_slices[i].size();
+        // LOG(ERROR) << "batched_slices size: " << batched_slices[i].size();
     }
     return ops;
 }
@@ -658,7 +658,7 @@ void Client::StartBatchPut(std::vector<PutOperation>& ops,
 
     keys.reserve(ops.size());
     slice_lengths.reserve(ops.size());
-    LOG(ERROR) << "ops size: " << ops.size();
+    // LOG(ERROR) << "ops size: " << ops.size();
     for (const auto& op : ops) {
         keys.emplace_back(op.key);
 
@@ -667,10 +667,10 @@ void Client::StartBatchPut(std::vector<PutOperation>& ops,
         for (const auto& slice : op.slices) {
             slice_sizes.emplace_back(slice.size);
         }
-        LOG(ERROR) << "slicen size: " << slice_sizes.size();
+        // LOG(ERROR) << "slicen size: " << slice_sizes.size();
         slice_lengths.emplace_back(std::move(slice_sizes));
     }
-    LOG(ERROR) << "slice_lengths size: " << slice_lengths.size();
+    // LOG(ERROR) << "slice_lengths size: " << slice_lengths.size();
     auto start_responses =
         master_client_.BatchPutStart(keys, slice_lengths, config);
 
