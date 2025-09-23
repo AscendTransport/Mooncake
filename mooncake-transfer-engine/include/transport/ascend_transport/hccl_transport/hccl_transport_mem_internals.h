@@ -50,33 +50,40 @@ extern "C" {
 #define TOTAL_AGG_DEV_SIZE 0x4000000
 #define PER_HUGE_BUFFER_SIZE 0x2000000
 #define HUGE_BUFFER_NUM 2
-
 struct RankControlInfo {
-    uint64_t deviceLogicId;
-    uint64_t devicePhyId;
-    struct in_addr hostIp;
-    struct in_addr deviceIp;
-    uint64_t pid;  // npu device pid
+    char hostIp[128];
+    char deviceIp[128];
+    char vnicIp[128];
+    uint32_t devPid;
+    int64_t sdid;
+    uint32_t deviceLogicId;
+    uint32_t devicePhyId;
 };
 
 struct RankInfo {
+    char hostIp[128];
+    char deviceIp[128];
+    char vnicIp[128];
     uint64_t rankId = 0xFFFFFFFF;
-    uint64_t serverIdx = 0;
-    struct in_addr hostIp;
     uint64_t hostPort = 0;
-    uint64_t deviceLogicId = 0;
-    uint64_t devicePhyId = 0;
     DevType deviceType{DevType::DEV_TYPE_NOSOC};
-    struct in_addr deviceIp;
     uint64_t devicePort = 16666;
-    uint64_t pid;  // npu device pid
+    uint32_t devPid;
+    int64_t sdid = 0xFFFFFFFF;
+    uint32_t serverId = 0;
+    uint32_t deviceLogicId;
+    uint32_t devicePhyId;
+
     RankInfo() = default;
     RankInfo(const RankControlInfo &controlInfo)
-        : hostIp(controlInfo.hostIp),
+        : devPid(controlInfo.devPid),
+          sdid(controlInfo.sdid),
           deviceLogicId(controlInfo.deviceLogicId),
-          devicePhyId(controlInfo.devicePhyId),
-          deviceIp(controlInfo.deviceIp),
-          pid(controlInfo.pid) {}
+          devicePhyId(controlInfo.devicePhyId) {
+            memcpy(hostIp, controlInfo.hostIp, sizeof(controlInfo.hostIp));
+            memcpy(deviceIp, controlInfo.deviceIp, sizeof(controlInfo.deviceIp));
+            memcpy(vnicIp, controlInfo.vnicIp, sizeof(controlInfo.vnicIp));
+        }
 };
 
 struct MemBlock {
@@ -131,6 +138,8 @@ extern std::vector<MemBlock> g_localBuffer;
 extern int g_epoll_fd_agg;
 extern int g_epoll_fd_target;
 
+extern bool a3Enabled();
+
 extern int initServerNetSocket(RankInfo *local_rank_info);
 
 extern int initControlSocket(RankInfo *local_rank_info, bool aggregateEnabled);
@@ -156,6 +165,8 @@ extern int acceptHcclSocket(std::shared_ptr<hccl::HcclSocket> &hccl_socket,
                             std::string baseTag_,
                             hccl::HcclIpAddress rempoteDevIp,
                             bool is_cross_hccs);
+
+extern void getDevIpAddresses(RankInfo *local_rank_info);
 
 #ifdef __cplusplus
 }

@@ -30,13 +30,14 @@ extern "C" {
 std::mutex g_transfer_mutex;
 std::condition_variable g_transfer_cond;
 std::queue<std::shared_ptr<transferReq>> g_transferReqList;
-// std::mutex g_map_mtx;
+//std::mutex g_map_mtx;
 
 std::mutex g_split_mutex;
 std::condition_variable g_split_cond;
 std::queue<int> g_splitList;
 std::vector<std::unique_ptr<HugeBuffer>> g_localHugeBuffer;
 std::vector<uint64_t> g_localMemtoSend;
+
 
 static int sendMemInfo(int client_socket, const std::vector<MemBlock> &memPool,
                        int opcode) {
@@ -130,15 +131,15 @@ int aggTransportMemTransfer(aclrtStream stream) {
         // LOG(INFO) << "recv end" << remote_base;
         remoteMem.addr = (void *)remote_base;
     }
+    //g_map_mtx.lock();
     // LOG(INFO) << "wirte or read start opcode:" << opcode;
-    // g_map_mtx.lock();
     if (opcode == WRITE) {
         ret = transport_mem->Write(remoteMem, localMem, stream);
         if (ret) {
             LOG(ERROR) << "Write failed, localMem: " << localMem.addr
                        << ", remoteMem: " << remoteMem.addr
                        << ", req_len: " << req->len << ", ret: " << ret;
-            // g_map_mtx.unlock();
+            //g_map_mtx.unlock();
             return ret;
         }
     } else {
@@ -147,7 +148,7 @@ int aggTransportMemTransfer(aclrtStream stream) {
             LOG(ERROR) << "Read failed, localMem: " << localMem.addr
                        << ", remoteMem: " << remoteMem.addr
                        << ", req_len: " << req->len << ", ret: " << ret;
-            // g_map_mtx.unlock();
+            //g_map_mtx.unlock();
             return ret;
         }
     }
@@ -157,7 +158,7 @@ int aggTransportMemTransfer(aclrtStream stream) {
         LOG(ERROR) << "AddOpFence failed, localMem: " << localMem.addr
                    << ", remoteMem: " << remoteMem.addr
                    << ", req_len: " << req->len << ", ret: " << ret;
-        // g_map_mtx.unlock();
+        //g_map_mtx.unlock();
         return ret;
     }
 
@@ -166,11 +167,11 @@ int aggTransportMemTransfer(aclrtStream stream) {
         LOG(ERROR) << "aclrtSynchronizeStream failed, localMem: "
                    << localMem.addr << ", remoteMem: " << remoteMem.addr
                    << ", req_len: " << req->len << ", ret: " << ret;
-        // g_map_mtx.unlock();
+        //g_map_mtx.unlock();
         return ret;
     }
-    // LOG(INFO) << "write or read end:" << opcode;
-    // g_map_mtx.unlock();
+    // LOG(ERROR) << "write or read end:" << opcode;
+    //g_map_mtx.unlock();
 
     if (req->isMerge == 0) {
         return 0;
@@ -229,12 +230,10 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
     std::shared_ptr<hccl::TransportMem> transport_mem{};
     // Check if a connection has been established with the peer, and send local
     // information to the peer
-    std::string key_str = std::string(inet_ntoa(remote_rank_info->hostIp)) +
-                          '-' + std::to_string(remote_rank_info->devicePhyId);
+    std::string key_str = std::string(remote_rank_info->hostIp) + '-' +
+                          std::to_string(remote_rank_info->devicePhyId);
     if (mem_type == DDR) {
-        std::string local_key =
-            std::string(inet_ntoa(local_rank_info->hostIp)) + '-' +
-            std::to_string(local_rank_info->devicePhyId);
+        std::string local_key = std::string(local_rank_info->hostIp) + '-' + std::to_string(local_rank_info->devicePhyId);
         // PUT OWN OBJECT / GET OWN OBJECT
         if (local_key == key_str) {
             uint64_t req_len = 0;
@@ -339,13 +338,18 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
             LOG(ERROR) << "controlInfoSend failed, ret: " << ret;
             return ret;
         }
-        bool same_host =
-            local_rank_info->hostIp.s_addr == remote_rank_info->hostIp.s_addr;
-        // For A2 series, internal communication among 8 cards does not cross
-        // HCCS, such as communication among cards 0-7
-        bool same_group = (local_rank_info->devicePhyId / 8) ==
-                          (remote_rank_info->devicePhyId / 8);
-        bool is_cross_hccs = !(same_host && same_group);
+        bool is_cross_hccs = false;
+        if (a3Enabled()) {
+            is_cross_hccs = false;
+        } else {
+            bool same_host =
+                (strcmp(local_rank_info->hostIp, remote_rank_info->hostIp) == 0);
+            // For A2 series, internal communication among 8 cards does not cross
+            // HCCS, such as communication among cards 0-7
+            bool same_group = (local_rank_info->devicePhyId / 8) ==
+                            (remote_rank_info->devicePhyId / 8);
+            is_cross_hccs = !(same_host && same_group);
+        }
         if (enableAscendLogging()) {
             LOG(INFO) << "hccl transport is cross_hccs: "
                       << (is_cross_hccs ? "true (cross-hccs)"
@@ -369,22 +373,21 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
         }
         g_target_key_to_connection_map[key_str].hccl_data_socket =
             hccl_data_socket;
-        // g_map_mtx.lock();
+        //g_map_mtx.lock();
         ret = createTransportMem(local_rank_info, remote_rank_info, key_str,
                                  is_cross_hccs, transport_mem, false);
-        // g_map_mtx.unlock();
+        //g_map_mtx.unlock();
         if (ret) {
             LOG(ERROR) << "createTransportMem failed, ret: " << ret;
             return ret;
         }
         int ack = 0;
-        ret = recv(g_target_key_to_connection_map[key_str].tcp_socket, &ack, sizeof(ack), 0);
+        ret = recv(g_target_key_to_connection_map[key_str].tcp_socket, &ack, sizeof(int), 0);
         if (ret <= 0) {
-            LOG(ERROR) << "Failed to receive ready write, ret: " << ret
-                       << ", errno: " << errno
-                       << ", error: " << strerror(errno);
-            return -1;
-        }
+	            LOG(ERROR) << "Failed to receive ack, ret: " << ret
+		                        << ", errno: " << errno << ", error: " << strerror(errno);
+	            return -1;
+	}	
     } else {
         transport_mem = g_target_key_to_connection_map[key_str].transport_mem;
     }
@@ -556,17 +559,17 @@ int aggTransportMemTask(RankInfo *local_rank_info, RankInfo *remote_rank_info,
                        << ", error: " << strerror(errno);
             return -1;
         }
-    }
-    // else {
-    //     ret = send(client_socket, &ready, sizeof(int), 0);
-    //     if (ret < 0) {
-    //         LOG(ERROR) << "Failed to send ready read, ret: " << ret
-    //                    << ", errno: " << errno
-    //                    << ", error: " << strerror(errno);
-    //         return -1;
-    //     }
-    // }
-    // LOG(INFO) << "slice ok";
+    } 
+    //else {
+    //    ret = send(client_socket, &ready, sizeof(int), 0);
+    //    if (ret < 0) {
+    //        LOG(ERROR) << "Failed to send ready read, ret: " << ret
+    //                   << ", errno: " << errno
+    //                   << ", error: " << strerror(errno);
+    //        return -1;
+    //   }
+    //}
+    // LOG(ERROR) << "slice ok";
     // auto duration_d1 =
     // std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1); auto
     // duration_d2 = std::chrono::duration_cast<std::chrono::microseconds>(t3 -
@@ -730,14 +733,14 @@ static int recvMemInfo(int client_socket, aclrtStream stream) {
                 return ret;
             }
             // LOG(INFO) << "RECV send ok addr:" << base_addr;
-            // ret = recv(client_socket, &ready, sizeof(int), MSG_WAITALL);
-            // if (ret <= 0) {
-            //     LOG(ERROR) << "Failed to receive ready write, ret: " << ret
-            //                << ", errno: " << errno
-            //                << ", error: " << strerror(errno);
-            //     return -1;
-            // }
-            // LOG(INFO) << "RECV ready addr:" << base_addr;
+            //ret = recv(client_socket, &ready, sizeof(int), MSG_WAITALL);
+            //if (ret <= 0) {
+            //    LOG(ERROR) << "Failed to receive ready write, ret: " << ret
+            //               << ", errno: " << errno
+            //               << ", error: " << strerror(errno);
+            //    return -1;
+            //}
+            //LOG(INFO) << "RECV ready addr:" << base_addr;
         } else {
             ret = recv(client_socket, &ready, sizeof(int), MSG_WAITALL);
             if (ret <= 0) {
@@ -886,7 +889,7 @@ void aggRegLocalMem(uint64_t addr, uint64_t length, bool isAggBuffer) {
         perHugeBuf.addr = addr;
         perHugeBuf.len = PER_HUGE_BUFFER_SIZE;
         g_localMemtoSend.emplace_back(addr);
-        g_localHugeBuffer.emplace_back(new HugeBuffer(perHugeBuf, true));
+        g_localHugeBuffer.emplace_back(new HugeBuffer(perHugeBuf, true));	    
     }
 
     return;

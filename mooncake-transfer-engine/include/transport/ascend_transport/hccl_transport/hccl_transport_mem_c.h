@@ -17,6 +17,7 @@
 #define HCCL_TRANSPORT_MEM_C_H
 
 #include <functional>
+#include "runtime/dev.h"
 #include "hccl_transport_mem_internals.h"
 
 #ifdef __cplusplus

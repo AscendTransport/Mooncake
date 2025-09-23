@@ -33,7 +33,10 @@ HcclTransport::HcclTransport() : running_(false) {
 HcclTransport::~HcclTransport() {
     if (running_) {
         running_ = false;
+        initiator_cond_.notify_all();
     }
+    initiator_cond_.notify_one();
+
     initiator_cond_.notify_one();
 
     if (aggregateEnabled_) {
@@ -75,16 +78,25 @@ int HcclTransport::prepareTransport(std::vector<Slice *> &slice_list) {
     }
 
     remote_rank_info_.rankId = segment_desc->rank_info.rankId;
-    inet_pton(AF_INET, segment_desc->rank_info.hostIp.c_str(),
-              &remote_rank_info_.hostIp);
     remote_rank_info_.hostPort = segment_desc->rank_info.hostPort;
     remote_rank_info_.deviceLogicId = segment_desc->rank_info.deviceLogicId;
     remote_rank_info_.devicePhyId = segment_desc->rank_info.devicePhyId;
-    inet_pton(AF_INET, segment_desc->rank_info.deviceIp.c_str(),
-              &remote_rank_info_.deviceIp);
     remote_rank_info_.devicePort = segment_desc->rank_info.devicePort;
-    remote_rank_info_.serverIdx = 0;
-    remote_rank_info_.pid = segment_desc->rank_info.pid;
+    remote_rank_info_.serverId = segment_desc->rank_info.serverId;
+    remote_rank_info_.devPid = segment_desc->rank_info.devPid;
+    remote_rank_info_.sdid = segment_desc->rank_info.sdid;
+
+    strncpy(remote_rank_info_.hostIp, segment_desc->rank_info.hostIp.c_str(),
+            127);
+    remote_rank_info_.hostIp[127] = '\0';
+
+    strncpy(remote_rank_info_.deviceIp,
+            segment_desc->rank_info.deviceIp.c_str(), 127);
+    remote_rank_info_.deviceIp[127] = '\0';
+
+    strncpy(remote_rank_info_.vnicIp, segment_desc->rank_info.vnicIp.c_str(),
+            127);
+    remote_rank_info_.vnicIp[127] = '\0';
 
     return 0;
 }
@@ -121,9 +133,9 @@ int HcclTransport::nonAggTransport(std::vector<Slice *> &slice_list,
         }
     }
 
-    if (inet_ntoa(local_rank_info_.hostIp) +
+    if (std::string(local_rank_info_.hostIp) +
             std::to_string(local_rank_info_.devicePhyId) ==
-        inet_ntoa(remote_rank_info_.hostIp) +
+        std::string(remote_rank_info_.hostIp) +
             std::to_string(remote_rank_info_.devicePhyId)) {
         // D2H
         for (auto slice : slice_list) {
@@ -350,97 +362,38 @@ int HcclTransport::getDevIdAndIpPortFromServerName(std::string &identifier,
     return 0;
 }
 
-int HcclTransport::rankInfoParse(int devicePhyId, std::string hostIp) {
-    int ret = 0;
+int HcclTransport::devInfoParse(std::string hostIp) {
     int deviceLogicId = 0;
+    int ret = aclrtGetDevice(&deviceLogicId);
     ret = aclrtGetDevice(&deviceLogicId);
     if (ret) {
         LOG(ERROR) << "HcclTransport: aclrtGetDevice failed, ret: " << ret;
         return ret;
     }
 
-    // Default configuration file path for HCCL
-    std::ifstream fin("/etc/hccn.conf");
-    if (!fin) {
-        LOG(ERROR) << "can't open conf 文件：/etc/hccn.conf";
-        return -1;
-    }
+    local_rank_info_.deviceLogicId = (uint32_t)deviceLogicId;
+    local_rank_info_.rankId = local_rank_info_.deviceLogicId;
 
-    std::string line;
-    while (std::getline(fin, line)) {
-        if (line.rfind("address_", 0) == 0) {
-            size_t equal_pos = line.find('=');
-            if (equal_pos != std::string::npos) {
-                std::string key = line.substr(8, equal_pos - 8);
-                key.erase(key.begin(), std::find_if(key.begin(), key.end(),
-                                                    [](unsigned char c) {
-                                                        return !std::isspace(c);
-                                                    }));
-                if (key == std::to_string(devicePhyId)) {
-                    std::string deviceIp = line.substr(equal_pos + 1);
-                    deviceIp.erase(
-                        deviceIp.begin(),
-                        std::find_if(
-                            deviceIp.begin(), deviceIp.end(),
-                            [](unsigned char c) { return !std::isspace(c); }));
-                    deviceIp.erase(
-                        std::find_if(
-                            deviceIp.rbegin(), deviceIp.rend(),
-                            [](unsigned char c) { return !std::isspace(c); })
-                            .base(),
-                        deviceIp.end());
+    strncpy(local_rank_info_.hostIp, hostIp.c_str(), 127);
+    local_rank_info_.hostIp[127] = '\0';
 
-                    if (inet_pton(AF_INET, hostIp.c_str(),
-                                  &local_rank_info_.hostIp) != 1) {
-                        LOG(ERROR) << "HcclTransport: Invalid Host IP format: "
-                                   << hostIp;
-                        return -1;
-                    }
-                    local_rank_info_.rankId = devicePhyId;
-                    local_rank_info_.serverIdx = 0;
-                    local_rank_info_.devicePhyId = devicePhyId;
-                    local_rank_info_.hostPort =
-                        ASCEND_DEFAULT_HOST_PORT + devicePhyId;
-                    local_rank_info_.deviceLogicId = deviceLogicId;
-                    local_rank_info_.devicePort = ASCEND_DEFAULT_DEVICE_PORT;
-                    local_rank_info_.pid = 0;
-                    if (inet_pton(AF_INET, deviceIp.c_str(),
-                                  &local_rank_info_.deviceIp) != 1) {
-                        LOG(ERROR)
-                            << "HcclTransport: Invalid Device IP format: "
-                            << deviceIp;
-                        return -1;
-                    }
-                    LOG(INFO)
-                        << "rankInfoParse Success, hostIp: " << hostIp
-                        << ", rankId: " << local_rank_info_.rankId
-                        << ", serverIdx: " << local_rank_info_.serverIdx
-                        << ", devicePhyId: " << local_rank_info_.devicePhyId
-                        << ", hostPort: " << local_rank_info_.hostPort
-                        << ", deviceLogicId: " << local_rank_info_.deviceLogicId
-                        << ", devicePort: " << local_rank_info_.devicePort
-                        << ", deviceIp: " << deviceIp
-                        << ", device pid: " << local_rank_info_.pid;
-                    // Exit after finishing rankInfoParse
-                    return 0;
-                }
-            }
-        }
-    }
-    // Not Found
-    return -1;
+    local_rank_info_.devicePort = ASCEND_DEFAULT_DEVICE_PORT;
+
+    local_rank_info_.hostPort =
+        ASCEND_DEFAULT_HOST_PORT + local_rank_info_.devicePhyId;
+
+    return 0;
 }
 
 int HcclTransport::install(std::string &local_server_name,
                            std::shared_ptr<TransferMetadata> meta,
                            std::shared_ptr<Topology> topo) {
-    int ret = 0;
     int port;
     std::string hostIp;
     int devicePhyId;
     metadata_ = meta;
-    ret = getDevIdAndIpPortFromServerName(local_server_name, hostIp, port,
-                                          devicePhyId);
+    int ret = getDevIdAndIpPortFromServerName(local_server_name, hostIp, port,
+                                              devicePhyId);
     if (ret) {
         LOG(ERROR)
             << "HcclTransport: getDevIdAndIpPortFromServerName failed, ret: "
@@ -454,9 +407,9 @@ int HcclTransport::install(std::string &local_server_name,
         << devicePhyId << ", local_server_name: " << local_server_name;
 
     // add to local_rank_info_
-    ret = rankInfoParse(devicePhyId, hostIp);
+    ret = devInfoParse(hostIp);
     if (ret) {
-        LOG(ERROR) << "HcclTransport: rankInfoParse failed, ret: " << ret;
+        LOG(ERROR) << "HcclTransport: devInfoParse failed, ret: " << ret;
         return ret;
     }
 
@@ -498,14 +451,12 @@ int HcclTransport::install(std::string &local_server_name,
                 LOG(ERROR) << "Failed to allocate device memory, ret:" << ret;
                 return ret;
             }
-
             const uint64_t alignment = 1 << 21;
             if ((uint64_t)devAddr % alignment != 0) {
                 LOG(ERROR) << "The Merge malloc address is not 2M aligned.";
                 return -1;
-            }
-
-            aggRegLocalMem((uint64_t)devAddr, PER_HUGE_BUFFER_SIZE, true);
+        }
+            aggRegLocalMem((uint64_t)devAddr, TOTAL_AGG_DEV_SIZE, true);
         }
     } else {
         ret = startNonAggThreads();
@@ -651,14 +602,13 @@ int HcclTransport::registerLocalMemory(void *addr, size_t length,
         }
     } else {
         if (aggregateEnabled_) {
-            ret = 0;
             // 强制开聚合，这里不注册内存
             // aggRegLocalMem(buffer_desc.addr, buffer_desc.length, false);
+            ret = 0;
         } else {
             nonAggRegLocalMem(buffer_desc.addr, buffer_desc.length, false);
         }
     }
-
     ret = metadata_->addLocalMemoryBuffer(buffer_desc, update_metadata);
     if (ret) {
         LOG(ERROR) << "HcclTransport: addLocalMemoryBuffer failed, ret: "
@@ -679,13 +629,16 @@ int HcclTransport::allocateLocalSegmentID() {
     desc->name = local_server_name_;
     desc->protocol = "ascend";
     desc->rank_info.rankId = local_rank_info_.rankId;
-    desc->rank_info.hostIp = inet_ntoa(local_rank_info_.hostIp);
+    desc->rank_info.hostIp = local_rank_info_.hostIp;
     desc->rank_info.hostPort = local_rank_info_.hostPort;
     desc->rank_info.deviceLogicId = local_rank_info_.deviceLogicId;
     desc->rank_info.devicePhyId = local_rank_info_.devicePhyId;
-    desc->rank_info.deviceIp = inet_ntoa(local_rank_info_.deviceIp);
+    desc->rank_info.deviceIp = local_rank_info_.deviceIp;
     desc->rank_info.devicePort = local_rank_info_.devicePort;
-    desc->rank_info.pid = local_rank_info_.pid;
+    desc->rank_info.devPid = local_rank_info_.devPid;
+    desc->rank_info.sdid = local_rank_info_.sdid;
+    desc->rank_info.serverId = local_rank_info_.serverId;
+    desc->rank_info.vnicIp = local_rank_info_.vnicIp;
 
     metadata_->addLocalSegment(LOCAL_SEGMENT_ID, local_server_name_,
                                std::move(desc));
