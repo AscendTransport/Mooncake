@@ -24,7 +24,6 @@ if (USE_ASCEND)
                       ${ASCEND_INCLUDE_DIR}/experiment/slog/toolchain
                       ${ASCEND_INCLUDE_DIR}/experiment/metadef/common/util/error_manager
                       ${ASCEND_INCLUDE_DIR}/experiment/runtime
-                        ${ASCEND_INCLUDE_DIR}/experiment/runtime/runtime
                       ${ASCEND_INCLUDE_DIR}/experiment/msprof
                       ${MPI_INCLUDE_DIR}
                       /usr/local/Ascend/ascend-toolkit/latest/tools/hccl_test/common/src/
